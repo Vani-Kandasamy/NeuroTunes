@@ -8,6 +8,7 @@ import os
 import joblib
 from datetime import datetime, timedelta
 import json
+from db import DDB
 
 # Class labels mapping (1-based indexing):
 # 1->Classical, 2->Rock, 3->Pop, 4->Rap, 5->R&B
@@ -313,6 +314,20 @@ def run_predictions_on_uploaded_data():
                     'updated_at': datetime.now().isoformat(),
                 }
                 _write_recommendations(data)
+                # Also persist to DynamoDB (best-effort)
+                try:
+                    ddb = DDB()
+                    ddb.put_recommendations(
+                        patient_id,
+                        categories=ranked,
+                        cognitive_scores={
+                            'engagement': round(avg_eng, 2) if avg_eng is not None else None,
+                            'focus': round(avg_foc, 2) if avg_foc is not None else None,
+                            'relaxation': round(avg_rel, 2) if avg_rel is not None else None,
+                        }
+                    )
+                except Exception:
+                    pass
                 st.success(f"Saved caregiver playlist recommendations for '{patient_id}'.")
         else:
             st.info("Enter a Patient ID (email) in EEG Upload to save playlist recommendations.")
