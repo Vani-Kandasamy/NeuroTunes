@@ -7,86 +7,28 @@ from datetime import datetime, timedelta
 import time
 import json
 from pathlib import Path
+from db import DDB
 
-# Melody database with 5 music genres (neural score removed)
-MELODY_DATABASE = {
-    "Classical": [
-        {"id": 1, "name": "Bach's Prelude", "duration": 240, "bpm": 72, "key": "C Major"},
-        {"id": 2, "name": "Mozart's Sonata", "duration": 280, "bpm": 68, "key": "G Major"},
-        {"id": 3, "name": "Beethoven's Symphony", "duration": 320, "bpm": 76, "key": "F Major"},
-        {"id": 4, "name": "Chopin's Nocturne", "duration": 200, "bpm": 65, "key": "D Major"},
-        {"id": 5, "name": "Vivaldi's Spring", "duration": 260, "bpm": 80, "key": "A Major"},
-        {"id": 6, "name": "Debussy's Clair de Lune", "duration": 220, "bpm": 62, "key": "E Major"},
-        {"id": 7, "name": "Pachelbel's Canon", "duration": 300, "bpm": 70, "key": "B♭ Major"},
-        {"id": 8, "name": "Schubert's Ave Maria", "duration": 180, "bpm": 60, "key": "C Major"},
-        {"id": 9, "name": "Brahms' Lullaby", "duration": 160, "bpm": 58, "key": "G Major"}
-    ],
-    "Rock": [
-        {"id": 10, "name": "Thunder Strike", "duration": 210, "bpm": 140, "key": "E Minor"},
-        {"id": 11, "name": "Electric Storm", "duration": 195, "bpm": 145, "key": "A Minor"},
-        {"id": 12, "name": "Power Chord", "duration": 180, "bpm": 135, "key": "D Minor"},
-        {"id": 13, "name": "Rock Anthem", "duration": 240, "bpm": 130, "key": "G Minor"},
-        {"id": 14, "name": "Guitar Hero", "duration": 220, "bpm": 138, "key": "C Minor"},
-        {"id": 15, "name": "Metal Fusion", "duration": 200, "bpm": 142, "key": "F Minor"},
-        {"id": 16, "name": "Drum Solo", "duration": 160, "bpm": 150, "key": "B Minor"},
-        {"id": 17, "name": "Bass Drop", "duration": 185, "bpm": 136, "key": "E Minor"},
-        {"id": 18, "name": "Amplified", "duration": 205, "bpm": 144, "key": "A Minor"}
-    ],
-    "Pop": [
-        {"id": 19, "name": "Catchy Beat", "duration": 180, "bpm": 120, "key": "C Major"},
-        {"id": 20, "name": "Dance Floor", "duration": 200, "bpm": 125, "key": "G Major"},
-        {"id": 21, "name": "Radio Hit", "duration": 190, "bpm": 118, "key": "F Major"},
-        {"id": 22, "name": "Upbeat Melody", "duration": 175, "bpm": 122, "key": "D Major"},
-        {"id": 23, "name": "Feel Good", "duration": 185, "bpm": 115, "key": "A Major"},
-        {"id": 24, "name": "Summer Vibes", "duration": 195, "bpm": 128, "key": "E Major"},
-        {"id": 25, "name": "Chart Topper", "duration": 170, "bpm": 120, "key": "B♭ Major"},
-        {"id": 26, "name": "Mainstream", "duration": 188, "bpm": 124, "key": "C Major"},
-        {"id": 27, "name": "Pop Anthem", "duration": 205, "bpm": 116, "key": "G Major"}
-    ],
-    "Rap": [
-        {"id": 28, "name": "Street Beats", "duration": 200, "bpm": 95, "key": "E Minor"},
-        {"id": 29, "name": "Urban Flow", "duration": 180, "bpm": 88, "key": "A Minor"},
-        {"id": 30, "name": "Hip Hop Classic", "duration": 220, "bpm": 92, "key": "D Minor"},
-        {"id": 31, "name": "Freestyle", "duration": 160, "bpm": 100, "key": "G Minor"},
-        {"id": 32, "name": "Boom Bap", "duration": 195, "bpm": 85, "key": "C Minor"},
-        {"id": 33, "name": "Trap Beat", "duration": 175, "bpm": 105, "key": "F Minor"},
-        {"id": 34, "name": "Conscious Rap", "duration": 240, "bpm": 90, "key": "B Minor"},
-        {"id": 35, "name": "Underground", "duration": 210, "bpm": 87, "key": "E Minor"},
-        {"id": 36, "name": "Lyrical Flow", "duration": 185, "bpm": 93, "key": "A Minor"}
-    ],
-    "R&B": [
-        {"id": 37, "name": "Smooth Soul", "duration": 220, "bpm": 75, "key": "C Major"},
-        {"id": 38, "name": "Velvet Voice", "duration": 240, "bpm": 70, "key": "G Major"},
-        {"id": 39, "name": "Groove Master", "duration": 200, "bpm": 78, "key": "F Major"},
-        {"id": 40, "name": "Soulful Nights", "duration": 260, "bpm": 68, "key": "D Major"},
-        {"id": 41, "name": "Love Ballad", "duration": 210, "bpm": 72, "key": "A Major"},
-        {"id": 42, "name": "Midnight Groove", "duration": 195, "bpm": 76, "key": "E Major"},
-        {"id": 43, "name": "Neo Soul", "duration": 225, "bpm": 74, "key": "B♭ Major"},
-        {"id": 44, "name": "Rhythm & Blues", "duration": 250, "bpm": 65, "key": "C Major"},
-        {"id": 45, "name": "Smooth Operator", "duration": 180, "bpm": 80, "key": "G Major"}
-    ]
-}
+def _load_catalog_from_store() -> dict:
+    """Load songs from Firestore and group by category. Ensure id and url fields."""
+    by_cat = {}
+    try:
+        ddb = DDB()
+        items = ddb.list_songs()
+        for it in items:
+            cat = it.get('category') or 'Uncategorized'
+            # Normalize id and url
+            song_id = it.get('id') or it.get('song_id')
+            if song_id is None:
+                continue
+            it['id'] = song_id
+            by_cat.setdefault(cat, []).append(it)
+    except Exception:
+        return {}
+    return by_cat
 
-def get_audio_url(category: str) -> str:
-    """Return a placeholder audio URL per category for testing playback in the browser."""
-    urls = {
-        "Classical": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-        "Rock": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-        "Pop": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-        "Rap": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-        "R&B": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
-    }
-    return urls.get(category, "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
-
-def attach_audio_urls_to_database():
-    """Populate each track with a genre-specific 'url' using provided placeholders."""
-    for category, tracks in MELODY_DATABASE.items():
-        cat_url = get_audio_url(category)
-        for t in tracks:
-            t['url'] = cat_url
-
-# Attach URLs at import time
-attach_audio_urls_to_database()
+# Global catalog loaded at import
+CATALOG = _load_catalog_from_store()
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -126,8 +68,16 @@ def get_caregiver_scores_for_user(user_email: str):
     """Return caregiver-provided cognitive scores dict for this user if available."""
     if not user_email:
         return None
-    data = _read_caregiver_recommendations()
-    entry = data.get(user_email)
+    # Prefer DynamoDB if available
+    try:
+        ddb = DDB()
+        item = ddb.get_recommendations(user_email)
+        if item:
+            entry = item
+        else:
+            entry = _read_caregiver_recommendations().get(user_email)
+    except Exception:
+        entry = _read_caregiver_recommendations().get(user_email)
     if not entry or not isinstance(entry, dict):
         return None
     scores = entry.get('cognitive_scores')
@@ -158,7 +108,7 @@ def get_recommended_playlist_for_user(user_email: str, max_tracks: int = 6):
             'score': float((r.get('score') or 0.0) / total)
         }
         for r in ranked
-        if str(r.get('category')) in MELODY_DATABASE
+        if str(r.get('category')) in CATALOG
     ]
     # Allocate tracks per category
     import math
@@ -177,7 +127,7 @@ def get_recommended_playlist_for_user(user_email: str, max_tracks: int = 6):
     # Build list of track dicts with category attached
     playlist = []
     for cat, cnt in alloc:
-        for track in MELODY_DATABASE.get(cat, [])[:cnt]:
+        for track in CATALOG.get(cat, [])[:cnt]:
             # Attach category and URL for playback
             playlist.append({**track, 'category': cat})
             if len(playlist) >= max_tracks:
@@ -218,6 +168,16 @@ def track_card(track, category):
                     'track': track,
                     'category': category
                 })
+                # Log play event to DynamoDB
+                try:
+                    user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
+                    DDB().log_event(user_email, 'play', {
+                        'track_id': track.get('id'),
+                        'name': track.get('name'),
+                        'category': category,
+                    })
+                except Exception:
+                    pass
         
         with col2:
             st.markdown(f"""
@@ -242,10 +202,18 @@ def general_user_dashboard():
     st.title("🎵 Music Therapy Portal")
     st.markdown(f"Welcome, **{user_info['name']}**! Discover your optimal melodies for cognitive enhancement.")
     
-    # Record a login session timestamp once per app session
+    # Record a login session timestamp once per app session and log to DDB
     if not st.session_state.session_started:
         st.session_state.login_sessions.append(datetime.now())
         st.session_state.session_started = True
+        try:
+            user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
+            user_name = (st.session_state.get('user_info', {}) or {}).get('name', 'User')
+            ddb = DDB()
+            ddb.log_event(user_email, 'login', {})
+            ddb.upsert_user(user_email, user_name)
+        except Exception:
+            pass
     
     # Sidebar navigation
     with st.sidebar:
@@ -268,9 +236,21 @@ def general_user_dashboard():
             st.session_state.current_track = None
             st.session_state.is_playing = False
             st.session_state.playback_position = 0
+            # Log stop event to DynamoDB
+            try:
+                user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
+                DDB().log_event(user_email, 'stop', {})
+            except Exception:
+                pass
         
         st.markdown("---")
         if st.button("🚪 Sign Out", use_container_width=True):
+            # Log logout event
+            try:
+                user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
+                DDB().log_event(user_email, 'logout', {})
+            except Exception:
+                pass
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
@@ -327,9 +307,9 @@ def general_user_dashboard():
                 st.markdown("---")
             st.subheader("🌟 Featured Tracks")
             # Show a few tracks from each category
-            for cat in list(MELODY_DATABASE.keys())[:2]:
+            for cat in list(CATALOG.keys())[:2]:
                 st.markdown(f"#### {cat}")
-                for track in MELODY_DATABASE[cat][:2]:
+                for track in CATALOG.get(cat, [])[:2]:
                     track_card(track, cat)
         
         with col2:
@@ -340,21 +320,24 @@ def general_user_dashboard():
         st.subheader("🎼 Music Library")
         
         # Category filter
+        available_categories = sorted(list(CATALOG.keys()))
         selected_categories = st.multiselect(
             "Filter by Category",
-            ["Classical", "Rock", "Pop", "Rap", "R&B"],
-            default=["Classical", "Rock", "Pop", "Rap", "R&B"]
+            available_categories,
+            default=available_categories
         )
         
         # Search
         search_term = st.text_input("🔍 Search tracks", placeholder="Enter track name...")
         
         # Display tracks by category
+        if not CATALOG:
+            st.info("No songs available. Please add songs to Firestore.")
         for category in selected_categories:
-            if category in MELODY_DATABASE:
+            if category in CATALOG:
                 st.markdown(f"### {category} 🎵")
                 
-                tracks = MELODY_DATABASE[category]
+                tracks = CATALOG.get(category, [])
                 
                 # Filter by search term
                 if search_term:
