@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from general_user import general_user_dashboard as music_therapy_dashboard
 from caregiver import caregiver_dashboard as ml_caregiver_dashboard
 import os
+from db import DDB
 
 # Configure Streamlit page
 st.set_page_config(
@@ -16,7 +17,8 @@ IMAGE_ADDRESS = "https://www.denvercenter.org/wp-content/uploads/2024/10/music-t
 
 # Caregiver emails (simple list)
 CAREGIVER_EMAILS = [
-    "aiclubcolab@gmail.com"
+    "caregiver1@example.com",
+    "caregiver2@example.com",
 ]
 
 def is_caregiver(email: str) -> bool:
@@ -73,6 +75,17 @@ def main():
     if not user:
         st.stop()
     st.session_state.user_info = user
+
+    # Upsert user and log login to DynamoDB (best-effort)
+    try:
+        email = (user.get("email") or "").strip()
+        name = (user.get("name") or "User").strip()
+        if email:
+            ddb = DDB()
+            ddb.upsert_user(email, name)
+            ddb.log_event(email, 'login', {})
+    except Exception:
+        pass
 
     # Route by role based on email
     user_email = (user.get("email") or "").strip()
