@@ -93,6 +93,11 @@ def _credentials_from_secrets(cfg: Dict[str, Any]) -> Optional[service_account.C
     """Return Credentials from root-level gcp_service_account if present."""
     try:
         sa = _get_sa_dict()
+        # Normalize private key in case it contains literal \n characters
+        pk = sa.get("private_key")
+        if isinstance(pk, str) and "-----BEGIN" in pk and "\\n" in pk and "\n" not in pk:
+            sa = dict(sa)
+            sa["private_key"] = pk.replace("\\n", "\n")
         return service_account.Credentials.from_service_account_info(sa)
     except Exception:
         return None
@@ -105,6 +110,11 @@ def get_firestore_client() -> firestore.Client:
     that accepts either a TOML inline table or a JSON string.
     """
     sa = _get_sa_dict()
+    # Normalize private key newlines for PEM parsing
+    pk = sa.get("private_key")
+    if isinstance(pk, str) and "-----BEGIN" in pk and "\\n" in pk and "\n" not in pk:
+        sa = dict(sa)
+        sa["private_key"] = pk.replace("\\n", "\n")
     credentials = service_account.Credentials.from_service_account_info(sa)
     project_id = sa.get("project_id")
     return firestore.Client(credentials=credentials, project=project_id)
