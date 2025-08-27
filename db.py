@@ -5,24 +5,53 @@ import streamlit as st
 from google.cloud import firestore
 from google.api_core.exceptions import GoogleAPIError
 
-# Configuration from Streamlit secrets (preferred)
+"""Strict Firestore configuration from Streamlit secrets.
+
+Required structure in .streamlit/secrets.toml:
+
+[firestore]
+project_id = "your-project-id"
+debug = true  # optional
+
+[firestore.collections]
+users = "NeuroTunes_Users"
+songs = "NeuroTunes_Songs"
+recommendations = "NeuroTunes_Recommendations"
+events = "NeuroTunes_Events"
+
+# optional for local/dev
+[firestore.service_account]
+# ... service account json fields ...
+"""
 def _get_fs_config() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     try:
-        fs = st.secrets.get("firestore", {})
+        fs = st.secrets.get("firestore")
     except Exception:
-        fs = {}
-    # project id
-    cfg["project_id"] = fs.get("project_id") or st.secrets.get("FIRESTORE_PROJECT_ID")
-    # collections
-    collections = fs.get("collections", {}) if isinstance(fs.get("collections", {}), dict) else {}
-    cfg["users_col"] = collections.get("users") or st.secrets.get("DDB_TABLE_USERS") or "NeuroTunes_Users"
-    cfg["songs_col"] = collections.get("songs") or st.secrets.get("DDB_TABLE_SONGS") or "NeuroTunes_Songs"
-    cfg["recs_col"] = collections.get("recommendations") or st.secrets.get("DDB_TABLE_RECOMMENDATIONS") or "NeuroTunes_Recommendations"
-    cfg["events_col"] = collections.get("events") or st.secrets.get("DDB_TABLE_EVENTS") or "NeuroTunes_Events"
-    # optional service account
+        fs = None
+    if not isinstance(fs, dict):
+        raise RuntimeError("Missing [firestore] configuration in Streamlit secrets.")
+
+    project_id = fs.get("project_id")
+    if not project_id or not isinstance(project_id, str):
+        raise RuntimeError("firestore.project_id must be set in Streamlit secrets.")
+    cfg["project_id"] = project_id
+
+    collections = fs.get("collections")
+    if not isinstance(collections, dict):
+        raise RuntimeError("firestore.collections must be a table with required keys: users, songs, recommendations, events.")
+    required_keys = ["users", "songs", "recommendations", "events"]
+    missing = [k for k in required_keys if not collections.get(k)]
+    if missing:
+        raise RuntimeError(f"Missing firestore.collections keys: {', '.join(missing)}")
+    cfg["users_col"] = str(collections["users"]).strip()
+    cfg["songs_col"] = str(collections["songs"]).strip()
+    cfg["recs_col"] = str(collections["recommendations"]).strip()
+    cfg["events_col"] = str(collections["events"]).strip()
+
     sa_info = fs.get("service_account")
     cfg["service_account"] = sa_info if isinstance(sa_info, dict) else None
+    cfg["debug"] = bool(fs.get("debug"))
     return cfg
 
 
@@ -57,6 +86,8 @@ class DDB:
         self._songs = self._client.collection(cfg["songs_col"]) 
         self._recs = self._client.collection(cfg["recs_col"]) 
         self._events = self._client.collection(cfg["events_col"]) 
+        # Debug flag
+        self._debug = bool(cfg.get("debug"))
 
     # Users
     def upsert_user(self, email: str, name: str) -> bool:
@@ -70,8 +101,10 @@ class DDB:
                 "updated_at": _ts_ms(),
             }, merge=True)
             return True
-        except GoogleAPIError:
-            return False
+        except GoogleAPIError as e:
+            if self._debug:
+                st.error(f"Firestore upsert_user failed: {e}")
+            raise
 
     # Recommendations
     def put_recommendations(self, email: str, categories: List[Dict[str, Any]], cognitive_scores: Optional[Dict[str, Any]]) -> bool:
@@ -87,8 +120,10 @@ class DDB:
                 data["cognitive_scores"] = cognitive_scores
             self._recs.document(email).set(data)
             return True
-        except GoogleAPIError:
-            return False
+        except GoogleAPIError as e:
+            if self._debug:
+                st.error(f"Firestore put_recommendations failed: {e}")
+            raise
 
     def get_recommendations(self, email: str) -> Optional[Dict[str, Any]]:
         try:
@@ -96,8 +131,10 @@ class DDB:
                 return None
             snap = self._recs.document(email).get()
             return snap.to_dict() if snap.exists else None
-        except GoogleAPIError:
-            return None
+        except GoogleAPIError as e:
+            if self._debug:
+                st.error(f"Firestore get_recommendations failed: {e}")
+            raise
 
     # Events
     def log_event(self, email: str, event_type: str, payload: Optional[Dict[str, Any]] = None) -> bool:
@@ -111,8 +148,10 @@ class DDB:
                 "payload": payload or {},
             })
             return True
-        except GoogleAPIError:
-            return False
+        except GoogleAPIError as e:
+            if self._debug:
+                st.error(f"Firestore log_event failed: {e}")
+            raise
 
     # Songs (optional placeholders)
     def put_song(self, song_id: str, data: Dict[str, Any]) -> bool:
@@ -121,8 +160,10 @@ class DDB:
                 return False
             self._songs.document(song_id).set({"song_id": song_id, **data})
             return True
-        except GoogleAPIError:
-            return False
+        except GoogleAPIError as e:
+            if self._debug:
+                st.error(f"Firestore put_song failed: {e}")
+            raise
 
     def list_songs(self, category: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return songs from Firestore; when category is provided, filter on it.
@@ -142,8 +183,23 @@ class DDB:
                 if limit and len(items) >= limit:
                     break
             return items
-        except GoogleAPIError:
-            return []
+        except GoogleAPIError as e:
+            if self._debug:
+                st.error(f"Firestore list_songs failed: {e}")
+            raise
+
+    def health_check(self) -> bool:
+        """Attempt a lightweight operation to validate Firestore connectivity."""
+        try:
+            # Try a no-op read on users collection
+            _ = self._users.limit(1).stream()
+            for _doc in _:
+                break
+            return True
+        except GoogleAPIError as e:
+            if self._debug:
+                st.error(f"Firestore health_check failed: {e}")
+            return False
 
     # -----------------------------
     # Catalog seeding helpers
