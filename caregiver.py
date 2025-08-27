@@ -299,6 +299,22 @@ def run_predictions_on_uploaded_data():
                     st.success(f"Saved caregiver playlist recommendations for '{patient_id}'.")
                 else:
                     st.error("Failed to save recommendations to Firestore.")
+                    # Quick connectivity diagnostic
+                    try:
+                        is_up = ddb.health_check()
+                    except Exception:
+                        is_up = False
+                    if not is_up:
+                        st.warning("Firestore health check failed. Verify gcp_service_account in secrets and network connectivity.")
+                    else:
+                        st.info("Firestore reachable, but write was denied/failed. Check Firestore security rules and the 'recommendations' collection name in secrets [collections].")
+                    # Show last error detail if available
+                    try:
+                        err = ddb.last_error()
+                        if err:
+                            st.caption(f"Last Firestore error: {err}")
+                    except Exception:
+                        pass
         else:
             st.info("Enter a Patient ID (email) in EEG Upload to save playlist recommendations.")
     except Exception as e:
