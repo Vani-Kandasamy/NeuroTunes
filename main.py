@@ -76,6 +76,13 @@ def main():
         admin_enabled = False
     if admin_enabled:
         with st.sidebar.expander("🛠️ Admin", expanded=False):
+            # Temporary debugging: secrets visibility
+            if st.checkbox("Show Secrets Debug", value=False):
+                try:
+                    st.write("Secrets keys:", list(st.secrets.keys()))
+                    st.write("Has firestore dict:", isinstance(st.secrets.get("firestore"), dict))
+                except Exception as e:
+                    st.error(f"Unable to read secrets: {e}")
             if st.button("Health Check: Firestore"):
                 try:
                     ok = DDB().health_check()
