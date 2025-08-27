@@ -7,7 +7,6 @@ from pathlib import Path
 import os
 import joblib
 from datetime import datetime, timedelta
-import json
 from db import DDB
 
 # Class labels mapping (1-based indexing):
@@ -166,26 +165,7 @@ def initialize_caregiver_session_state():
     if 'patient_id' not in st.session_state:
         st.session_state.patient_id = ""
 
-# -----------------------------
-# Recommendation persistence (shared file)
-# -----------------------------
-RECOMMENDATIONS_FILE = Path(__file__).parent / "shared_recommendations.json"
-
-def _read_recommendations() -> dict:
-    try:
-        if RECOMMENDATIONS_FILE.exists():
-            with open(RECOMMENDATIONS_FILE, 'r') as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-def _write_recommendations(data: dict) -> None:
-    try:
-        with open(RECOMMENDATIONS_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        st.error(f"Failed to write recommendations: {e}")
+# Firestore is the only persistence layer for recommendations
 
 
 def run_predictions_on_uploaded_data():
@@ -303,34 +283,24 @@ def run_predictions_on_uploaded_data():
                 avg_foc = float((10 - df_out['focus_score_normalized']).mean()) if 'focus_score_normalized' in df_out.columns else None
                 avg_rel = float(df_out['relaxation_score_normalized'].mean()) if 'relaxation_score_normalized' in df_out.columns else None
 
-                data = _read_recommendations()
-                data[patient_id] = {
-                    'categories': ranked,
-                    'cognitive_scores': {
+                # Persist directly to Firestore only
+                # Persist to Firestore via DDB (errors will surface)
+                ddb = DDB()
+                ok = ddb.put_recommendations(
+                    patient_id,
+                    categories=ranked,
+                    cognitive_scores={
                         'engagement': round(avg_eng, 2) if avg_eng is not None else None,
                         'focus': round(avg_foc, 2) if avg_foc is not None else None,
                         'relaxation': round(avg_rel, 2) if avg_rel is not None else None,
-                    },
-                    'updated_at': datetime.now().isoformat(),
-                }
-                _write_recommendations(data)
-                # Also persist to DynamoDB (best-effort)
-                try:
-                    ddb = DDB()
-                    ddb.put_recommendations(
-                        patient_id,
-                        categories=ranked,
-                        cognitive_scores={
-                            'engagement': round(avg_eng, 2) if avg_eng is not None else None,
-                            'focus': round(avg_foc, 2) if avg_foc is not None else None,
-                            'relaxation': round(avg_rel, 2) if avg_rel is not None else None,
-                        }
-                    )
-                except Exception:
-                    pass
-                st.success(f"Saved caregiver playlist recommendations for '{patient_id}'.")
-        else:
-            st.info("Enter a Patient ID (email) in EEG Upload to save playlist recommendations.")
+                    }
+                )
+                if ok:
+                    st.success(f"Saved caregiver playlist recommendations for '{patient_id}'.")
+                else:
+                    st.error("Failed to save recommendations to Firestore.")
+    else:
+        st.info("Enter a Patient ID (email) in EEG Upload to save playlist recommendations.")
     except Exception as e:
         st.error(f"Error running predictions: {e}")
 
