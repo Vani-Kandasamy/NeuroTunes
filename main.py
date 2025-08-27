@@ -17,7 +17,7 @@ IMAGE_ADDRESS = "https://www.denvercenter.org/wp-content/uploads/2024/10/music-t
 
 # Caregiver emails (simple list)
 CAREGIVER_EMAILS = [
-    "aiclubcolab@gmail.com"
+    "vani.kandasamy@pyxeda.ai"
 ]
 
 def is_caregiver(email: str) -> bool:
@@ -43,22 +43,8 @@ def get_user_simple() -> Optional[Dict[str, Any]]:
         st.markdown(f"Hello, <span style='color: orange; font-weight: bold;'>{name}</span>!", unsafe_allow_html=True)
         return {"name": name, "email": email}
     
-    # Fallback: simple form-based login stored in session_state
-    with st.sidebar:
-        st.info("Using simple sign-in (experimental auth not available).")
-        if "simple_user" not in st.session_state:
-            st.session_state.simple_user = None
-        with st.form("simple_login_form", clear_on_submit=False):
-            name = st.text_input("Name", value=(st.session_state.simple_user or {}).get("name", ""))
-            email = st.text_input("Email (optional)", value=(st.session_state.simple_user or {}).get("email", ""))
-            submitted = st.form_submit_button("Continue", type="primary")
-        if submitted:
-            st.session_state.simple_user = {"name": name.strip() or "User", "email": (email or "").strip()}
-        user = st.session_state.simple_user
-    if not user:
-        return None
-    st.markdown(f"Hello, <span style='color: orange; font-weight: bold;'>{user['name']}</span>!", unsafe_allow_html=True)
-    return user
+    # No fallback: require Streamlit experimental auth
+    return None
 
 
 
@@ -75,16 +61,36 @@ def main():
         st.stop()
     st.session_state.user_info = user
 
-    # Upsert user and log login to DynamoDB (best-effort)
+    # Upsert user and log login to Firestore
+    email = (user.get("email") or "").strip()
+    name = (user.get("name") or "User").strip()
+    if email:
+        ddb = DDB()
+        ddb.upsert_user(email, name)
+        ddb.log_event(email, 'login', {})
+
+    # Admin tools (optional): enable via .streamlit/secrets.toml -> [admin] enable = true
     try:
-        email = (user.get("email") or "").strip()
-        name = (user.get("name") or "User").strip()
-        if email:
-            ddb = DDB()
-            ddb.upsert_user(email, name)
-            ddb.log_event(email, 'login', {})
+        admin_enabled = bool((st.secrets.get("admin", {}) or {}).get("enable")) or bool(st.secrets.get("FIRESTORE_ADMIN"))
     except Exception:
-        pass
+        admin_enabled = False
+    if admin_enabled:
+        with st.sidebar.expander("🛠️ Admin", expanded=False):
+            if st.button("Health Check: Firestore"):
+                try:
+                    ok = DDB().health_check()
+                    if ok:
+                        st.success("Firestore health OK ✔️")
+                    else:
+                        st.error("Firestore health check failed ❌")
+                except Exception as e:
+                    st.error(f"Health check error: {e}")
+            if st.button("Seed Default Songs"):
+                try:
+                    count = DDB().seed_initial_songs()
+                    st.success(f"Seeded {count} songs into Firestore ✔️")
+                except Exception as e:
+                    st.error(f"Seeding failed: {e}")
 
     # Route by role based on email
     user_email = (user.get("email") or "").strip()
