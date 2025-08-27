@@ -2,6 +2,8 @@ import time
 from typing import Any, Dict, Optional, List
 
 import streamlit as st
+import json
+from collections.abc import Mapping
 from google.cloud import firestore
 from google.api_core.exceptions import GoogleAPIError
 from google.oauth2 import service_account
@@ -23,19 +25,35 @@ events = "NeuroTunes_Events"
 debug = true
 GCP_PROJECT_ID = "override-project-id-if-needed"  # falls back to SA project_id
 """
+def _get_sa_dict() -> Dict[str, Any]:
+    """Return service account as dict from st.secrets['gcp_service_account'].
+
+    Accepts either a TOML inline table (already dict) or a JSON string.
+    """
+    try:
+        raw = st.secrets.get("gcp_service_account")
+    except Exception:
+        raw = None
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    try:
+        keys = list(st.secrets.keys())
+    except Exception:
+        keys = []
+    raise RuntimeError(f"Missing or invalid gcp_service_account in Streamlit secrets. Provide as TOML inline table or JSON string. Available sections: {keys}")
+
+
 def _get_fs_config() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     # Required: service account
-    try:
-        sa = st.secrets.get("gcp_service_account")
-    except Exception:
-        sa = None
-    if not isinstance(sa, dict):
-        try:
-            keys = list(st.secrets.keys())
-        except Exception:
-            keys = []
-        raise RuntimeError(f"Missing root-level gcp_service_account in Streamlit secrets. Available sections: {keys}")
+    sa = _get_sa_dict()
 
     # Project ID: from SA or optional override
     project_id = sa.get("project_id") or st.secrets.get("GCP_PROJECT_ID")
@@ -51,7 +69,8 @@ def _get_fs_config() -> Dict[str, Any]:
         "recommendations": "NeuroTunes_Recommendations",
         "events": "NeuroTunes_Events",
     }
-    if isinstance(col, dict):
+    if isinstance(col, Mapping):
+        col = dict(col)
         cfg["users_col"] = str(col.get("users", defaults["users"]))
         cfg["songs_col"] = str(col.get("songs", defaults["songs"]))
         cfg["recs_col"] = str(col.get("recommendations", defaults["recommendations"]))
@@ -73,12 +92,10 @@ def _ts_ms() -> int:
 def _credentials_from_secrets(cfg: Dict[str, Any]) -> Optional[service_account.Credentials]:
     """Return Credentials from root-level gcp_service_account if present."""
     try:
-        sa = st.secrets.get("gcp_service_account")
-        if isinstance(sa, dict):
-            return service_account.Credentials.from_service_account_info(sa)
+        sa = _get_sa_dict()
+        return service_account.Credentials.from_service_account_info(sa)
     except Exception:
         return None
-    return None
 
 
 class DDB:
