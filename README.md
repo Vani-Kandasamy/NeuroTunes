@@ -55,16 +55,35 @@ pip install -r requirements.txt
    - Add authorized origins (e.g., `http://localhost:8501`)
    - Add authorized redirect URIs (e.g., `http://localhost:8501`)
 
-### 3. Streamlit Secrets Configuration
+### 3. Streamlit Secrets Configuration (Required)
 
-1. Configure your Google OAuth credentials in `.streamlit/secrets.toml`:
+Create `.streamlit/secrets.toml` with Google OAuth and Firestore settings. Experimental auth is required; no simple fallback login exists.
 
 ```toml
 [default]
 GOOGLE_CLIENT_ID = "your-actual-client-id.apps.googleusercontent.com"
+
+[firestore]
+project_id = "your-gcp-project-id"
+debug = true  # optional
+
+[firestore.collections]
+users = "NeuroTunes_Users"
+songs = "NeuroTunes_Songs"
+recommendations = "NeuroTunes_Recommendations"
+events = "NeuroTunes_Events"
+
+# Optional: for local/dev use a service account instead of ADC
+[firestore.service_account]
+type = "service_account"
+project_id = "your-gcp-project-id"
+private_key_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+client_email = "svc@your-gcp-project-id.iam.gserviceaccount.com"
+token_uri = "https://oauth2.googleapis.com/token"
 ```
 
-2. Add `.streamlit/secrets.toml` to your `.gitignore` file to keep credentials secure
+Add `.streamlit/secrets.toml` to your `.gitignore` file to keep credentials secure.
 
 ### 4. Configure Caregiver Emails
 
@@ -99,9 +118,9 @@ For caregiver uploads, CSV files should contain:
 - **Target column**: `Melody #` (1-5 for music genres)
 - **No metadata**: Patient ID assigned automatically during upload
 
-## Demo Mode
+## Authentication
 
-For testing purposes, the app includes a demo login form that doesn't require actual Google OAuth setup. Simply enter any email and name to simulate login.
+The app uses Streamlit experimental auth (Google Sign-In). If experimental auth is unavailable or the user is not logged in, the app will not proceed past the login screen.
 
 ## User Roles
 
@@ -124,8 +143,8 @@ For testing purposes, the app includes a demo login form that doesn't require ac
 
 ## Security Notes
 
-- Never commit `.env` file to version control
-- Use environment variables for sensitive configuration
+- Never commit `.env` or `.streamlit/secrets.toml` to version control
+- Use Streamlit secrets for sensitive configuration (OAuth, Firestore)
 - Implement proper session management in production
 - Add HTTPS in production environments
 - Validate and sanitize all user inputs
@@ -133,9 +152,9 @@ For testing purposes, the app includes a demo login form that doesn't require ac
 ## Production Deployment
 
 For production deployment:
-1. Set up proper environment variables
+1. Configure required Streamlit secrets (OAuth and Firestore)
 2. Configure HTTPS
-3. Use a production-grade database
+3. Use Firestore as the single source of truth (no local fallbacks)
 4. Implement proper logging
 5. Add error handling and monitoring
 6. Set up backup and recovery procedures
