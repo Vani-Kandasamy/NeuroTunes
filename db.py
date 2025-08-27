@@ -4,59 +4,81 @@ from typing import Any, Dict, Optional, List
 import streamlit as st
 from google.cloud import firestore
 from google.api_core.exceptions import GoogleAPIError
+from google.oauth2 import service_account
 
-"""Strict Firestore configuration from Streamlit secrets.
+"""Firestore configuration using root-level gcp_service_account only.
 
-Required structure in .streamlit/secrets.toml:
+Required structure in Streamlit Secrets (Cloud UI or local .streamlit/secrets.toml):
 
-[firestore]
-project_id = "your-project-id"
-debug = true  # optional
+gcp_service_account = { ... full service account json ... }
 
-[firestore.collections]
+# Optional overrides
+[collections]
 users = "NeuroTunes_Users"
 songs = "NeuroTunes_Songs"
 recommendations = "NeuroTunes_Recommendations"
 events = "NeuroTunes_Events"
 
-# optional for local/dev
-[firestore.service_account]
-# ... service account json fields ...
+# Optional
+debug = true
+GCP_PROJECT_ID = "override-project-id-if-needed"  # falls back to SA project_id
 """
 def _get_fs_config() -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
+    # Required: service account
     try:
-        fs = st.secrets.get("firestore")
+        sa = st.secrets.get("gcp_service_account")
     except Exception:
-        fs = None
-    if not isinstance(fs, dict):
-        raise RuntimeError("Missing [firestore] configuration in Streamlit secrets.")
+        sa = None
+    if not isinstance(sa, dict):
+        try:
+            keys = list(st.secrets.keys())
+        except Exception:
+            keys = []
+        raise RuntimeError(f"Missing root-level gcp_service_account in Streamlit secrets. Available sections: {keys}")
 
-    project_id = fs.get("project_id")
-    if not project_id or not isinstance(project_id, str):
-        raise RuntimeError("firestore.project_id must be set in Streamlit secrets.")
-    cfg["project_id"] = project_id
+    # Project ID: from SA or optional override
+    project_id = sa.get("project_id") or st.secrets.get("GCP_PROJECT_ID")
+    if not project_id:
+        raise RuntimeError("Could not determine project_id. Ensure gcp_service_account.project_id or GCP_PROJECT_ID is set.")
+    cfg["project_id"] = str(project_id)
 
-    collections = fs.get("collections")
-    if not isinstance(collections, dict):
-        raise RuntimeError("firestore.collections must be a table with required keys: users, songs, recommendations, events.")
-    required_keys = ["users", "songs", "recommendations", "events"]
-    missing = [k for k in required_keys if not collections.get(k)]
-    if missing:
-        raise RuntimeError(f"Missing firestore.collections keys: {', '.join(missing)}")
-    cfg["users_col"] = str(collections["users"]).strip()
-    cfg["songs_col"] = str(collections["songs"]).strip()
-    cfg["recs_col"] = str(collections["recommendations"]).strip()
-    cfg["events_col"] = str(collections["events"]).strip()
+    # Collections: optional override via [collections]; else sensible defaults
+    col = st.secrets.get("collections")
+    defaults = {
+        "users": "NeuroTunes_Users",
+        "songs": "NeuroTunes_Songs",
+        "recommendations": "NeuroTunes_Recommendations",
+        "events": "NeuroTunes_Events",
+    }
+    if isinstance(col, dict):
+        cfg["users_col"] = str(col.get("users", defaults["users"]))
+        cfg["songs_col"] = str(col.get("songs", defaults["songs"]))
+        cfg["recs_col"] = str(col.get("recommendations", defaults["recommendations"]))
+        cfg["events_col"] = str(col.get("events", defaults["events"]))
+    else:
+        cfg["users_col"] = defaults["users"]
+        cfg["songs_col"] = defaults["songs"]
+        cfg["recs_col"] = defaults["recommendations"]
+        cfg["events_col"] = defaults["events"]
 
-    sa_info = fs.get("service_account")
-    cfg["service_account"] = sa_info if isinstance(sa_info, dict) else None
-    cfg["debug"] = bool(fs.get("debug"))
+    cfg["debug"] = bool(st.secrets.get("debug"))
     return cfg
 
 
 def _ts_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _credentials_from_secrets(cfg: Dict[str, Any]) -> Optional[service_account.Credentials]:
+    """Return Credentials from root-level gcp_service_account if present."""
+    try:
+        sa = st.secrets.get("gcp_service_account")
+        if isinstance(sa, dict):
+            return service_account.Credentials.from_service_account_info(sa)
+    except Exception:
+        return None
+    return None
 
 
 class DDB:
@@ -73,11 +95,10 @@ class DDB:
         # Load configuration from secrets
         cfg = _get_fs_config()
         project = project_id or cfg.get("project_id")
-        sa_info = cfg.get("service_account")
-        # Initialize Firestore client
-        if sa_info:
-            # If service account provided, use it directly
-            self._client = firestore.Client.from_service_account_info(sa_info, project=project or sa_info.get("project_id"))
+        # Initialize Firestore client using service account credentials when available
+        creds = _credentials_from_secrets(cfg)
+        if creds is not None:
+            self._client = firestore.Client(project=project or getattr(creds, "project_id", None), credentials=creds)
         else:
             # Use ADC with optional project id
             self._client = firestore.Client(project=project) if project else firestore.Client()
