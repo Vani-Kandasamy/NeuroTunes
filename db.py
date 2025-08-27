@@ -137,12 +137,12 @@ class DDB:
                 "user_email": email,
                 "name": name or "User",
                 "updated_at": _ts_ms(),
-            }, merge=True)
+            }, merge=True, timeout=15.0)
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore upsert_user failed: {e}")
-            raise
+            return False
 
     # Recommendations
     def put_recommendations(self, email: str, categories: List[Dict[str, Any]], cognitive_scores: Optional[Dict[str, Any]]) -> bool:
@@ -156,23 +156,23 @@ class DDB:
             }
             if cognitive_scores is not None:
                 data["cognitive_scores"] = cognitive_scores
-            self._recs.document(email).set(data)
+            self._recs.document(email).set(data, timeout=15.0)
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore put_recommendations failed: {e}")
-            raise
+            return False
 
     def get_recommendations(self, email: str) -> Optional[Dict[str, Any]]:
         try:
             if not email:
                 return None
-            snap = self._recs.document(email).get()
+            snap = self._recs.document(email).get(timeout=15.0)
             return snap.to_dict() if snap.exists else None
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore get_recommendations failed: {e}")
-            raise
+            return None
 
     # Events
     def log_event(self, email: str, event_type: str, payload: Optional[Dict[str, Any]] = None) -> bool:
@@ -184,24 +184,24 @@ class DDB:
                 "ts": _ts_ms(),
                 "event_type": event_type,
                 "payload": payload or {},
-            })
+            }, timeout=10.0)
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore log_event failed: {e}")
-            raise
+            return False
 
     # Songs (optional placeholders)
     def put_song(self, song_id: str, data: Dict[str, Any]) -> bool:
         try:
             if not song_id:
                 return False
-            self._songs.document(song_id).set({"song_id": song_id, **data})
+            self._songs.document(song_id).set({"song_id": song_id, **data}, timeout=20.0)
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore put_song failed: {e}")
-            raise
+            return False
 
     def list_songs(self, category: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return songs from Firestore; when category is provided, filter on it.
@@ -211,7 +211,8 @@ class DDB:
             query = self._songs
             if category:
                 query = query.where('category', '==', category)
-            stream = query.stream()
+            # Use a bounded timeout to avoid long hangs
+            stream = query.stream(timeout=20.0)
             items: List[Dict[str, Any]] = []
             for doc in stream:
                 data = doc.to_dict() or {}
@@ -224,13 +225,13 @@ class DDB:
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore list_songs failed: {e}")
-            raise
+            return []
 
     def health_check(self) -> bool:
         """Attempt a lightweight operation to validate Firestore connectivity."""
         try:
             # Try a no-op read on users collection
-            _ = self._users.limit(1).stream()
+            _ = self._users.limit(1).stream(timeout=10.0)
             for _doc in _:
                 break
             return True
