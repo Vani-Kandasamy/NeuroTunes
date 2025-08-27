@@ -5,26 +5,23 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
-import json
-from pathlib import Path
 from db import DDB
 
 def _load_catalog_from_store() -> dict:
-    """Load songs from Firestore and group by category. Ensure id and url fields."""
+    """Load songs from Firestore and group by category. Ensure id and url fields.
+
+    Errors are surfaced; no local fallback is used.
+    """
     by_cat = {}
-    try:
-        ddb = DDB()
-        items = ddb.list_songs()
-        for it in items:
-            cat = it.get('category') or 'Uncategorized'
-            # Normalize id and url
-            song_id = it.get('id') or it.get('song_id')
-            if song_id is None:
-                continue
-            it['id'] = song_id
-            by_cat.setdefault(cat, []).append(it)
-    except Exception:
-        return {}
+    ddb = DDB()
+    items = ddb.list_songs()
+    for it in items:
+        cat = it.get('category') or 'Uncategorized'
+        song_id = it.get('id') or it.get('song_id')
+        if song_id is None:
+            continue
+        it['id'] = song_id
+        by_cat.setdefault(cat, []).append(it)
     return by_cat
 
 # Global catalog loaded at import
@@ -53,31 +50,12 @@ def initialize_session_state():
 
 # Sample neural data generation removed
 
-def _read_caregiver_recommendations() -> dict:
-    """Read shared recommendations file written by caregiver dashboard."""
-    rec_path = Path(__file__).parent / "shared_recommendations.json"
-    try:
-        if rec_path.exists():
-            with open(rec_path, 'r') as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
 def get_caregiver_scores_for_user(user_email: str):
     """Return caregiver-provided cognitive scores dict for this user if available."""
     if not user_email:
         return None
-    # Prefer DynamoDB if available
-    try:
-        ddb = DDB()
-        item = ddb.get_recommendations(user_email)
-        if item:
-            entry = item
-        else:
-            entry = _read_caregiver_recommendations().get(user_email)
-    except Exception:
-        entry = _read_caregiver_recommendations().get(user_email)
+    ddb = DDB()
+    entry = ddb.get_recommendations(user_email)
     if not entry or not isinstance(entry, dict):
         return None
     scores = entry.get('cognitive_scores')
@@ -93,8 +71,7 @@ def get_recommended_playlist_for_user(user_email: str, max_tracks: int = 6):
     """
     if not user_email:
         return []
-    data = _read_caregiver_recommendations()
-    entry = data.get(user_email)
+    entry = DDB().get_recommendations(user_email)
     if not entry or not isinstance(entry, dict):
         return []
     ranked = entry.get('categories') or []
@@ -168,16 +145,13 @@ def track_card(track, category):
                     'track': track,
                     'category': category
                 })
-                # Log play event to DynamoDB
-                try:
-                    user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
-                    DDB().log_event(user_email, 'play', {
-                        'track_id': track.get('id'),
-                        'name': track.get('name'),
-                        'category': category,
-                    })
-                except Exception:
-                    pass
+                # Log play event to Firestore
+                user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
+                DDB().log_event(user_email, 'play', {
+                    'track_id': track.get('id'),
+                    'name': track.get('name'),
+                    'category': category,
+                })
         
         with col2:
             st.markdown(f"""
@@ -202,18 +176,15 @@ def general_user_dashboard():
     st.title("🎵 Music Therapy Portal")
     st.markdown(f"Welcome, **{user_info['name']}**! Discover your optimal melodies for cognitive enhancement.")
     
-    # Record a login session timestamp once per app session and log to DDB
+    # Record a login session timestamp once per app session and log to Firestore
     if not st.session_state.session_started:
         st.session_state.login_sessions.append(datetime.now())
         st.session_state.session_started = True
-        try:
-            user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
-            user_name = (st.session_state.get('user_info', {}) or {}).get('name', 'User')
-            ddb = DDB()
-            ddb.log_event(user_email, 'login', {})
-            ddb.upsert_user(user_email, user_name)
-        except Exception:
-            pass
+        user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
+        user_name = (st.session_state.get('user_info', {}) or {}).get('name', 'User')
+        ddb = DDB()
+        ddb.log_event(user_email, 'login', {})
+        ddb.upsert_user(user_email, user_name)
     
     # Sidebar navigation
     with st.sidebar:
@@ -236,24 +207,12 @@ def general_user_dashboard():
             st.session_state.current_track = None
             st.session_state.is_playing = False
             st.session_state.playback_position = 0
-            # Log stop event to DynamoDB
-            try:
-                user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
-                DDB().log_event(user_email, 'stop', {})
-            except Exception:
-                pass
+            # Log stop event to Firestore
+            user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
+            DDB().log_event(user_email, 'stop', {})
         
         st.markdown("---")
-        if st.button("🚪 Sign Out", use_container_width=True):
-            # Log logout event
-            try:
-                user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
-                DDB().log_event(user_email, 'logout', {})
-            except Exception:
-                pass
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+        # Sign out handled centrally in main/auth sidebar
     
     # Main content
     if page == "Dashboard":
@@ -314,7 +273,7 @@ def general_user_dashboard():
         
         with col2:
             st.subheader("🎯 Tips")
-            st.info("Explore categories in the Music Library and pick what you enjoy. Neural and engagement scores are no longer shown.")
+            st.info("Explore categories in the Music Library and pick what you enjoy.")
     
     elif page == "Music Library":
         st.subheader("🎼 Music Library")
