@@ -8,24 +8,35 @@ import time
 from db import DDB
 
 def _load_catalog_from_store() -> dict:
-    """Load songs from Firestore and group by category. Ensure id and url fields.
+    """Load songs from Firestore and group by category.
 
-    Errors are surfaced; no local fallback is used.
+    Returns an empty dict on failure and surfaces a warning to the user.
     """
-    by_cat = {}
-    ddb = DDB()
-    items = ddb.list_songs()
-    for it in items:
-        cat = it.get('category') or 'Uncategorized'
-        song_id = it.get('id') or it.get('song_id')
-        if song_id is None:
-            continue
-        it['id'] = song_id
-        by_cat.setdefault(cat, []).append(it)
-    return by_cat
+    try:
+        by_cat = {}
+        ddb = DDB()
+        items = ddb.list_songs()
+        for it in items:
+            cat = it.get('category') or 'Uncategorized'
+            song_id = it.get('id') or it.get('song_id')
+            if song_id is None:
+                continue
+            it['id'] = song_id
+            by_cat.setdefault(cat, []).append(it)
+        return by_cat
+    except Exception as e:
+        st.warning("Unable to load songs from the database right now. Please try again later.")
+        return {}
 
-# Global catalog loaded at import
-CATALOG = _load_catalog_from_store()
+# Lazily-loaded catalog to avoid blocking at import time
+CATALOG = {}
+
+def get_catalog() -> dict:
+    """Return cached catalog; load from store on first access."""
+    global CATALOG
+    if not CATALOG:
+        CATALOG = _load_catalog_from_store()
+    return CATALOG
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -78,6 +89,7 @@ def get_recommended_playlist_for_user(user_email: str, max_tracks: int = 6):
     if not ranked:
         return []
     # Normalize scores
+    catalog = get_catalog()
     total = float(sum((r.get('score') or 0.0) for r in ranked)) or 1.0
     ranked = [
         {
@@ -85,7 +97,7 @@ def get_recommended_playlist_for_user(user_email: str, max_tracks: int = 6):
             'score': float((r.get('score') or 0.0) / total)
         }
         for r in ranked
-        if str(r.get('category')) in CATALOG
+        if str(r.get('category')) in catalog
     ]
     # Allocate tracks per category
     import math
@@ -104,7 +116,7 @@ def get_recommended_playlist_for_user(user_email: str, max_tracks: int = 6):
     # Build list of track dicts with category attached
     playlist = []
     for cat, cnt in alloc:
-        for track in CATALOG.get(cat, [])[:cnt]:
+        for track in catalog.get(cat, [])[:cnt]:
             # Attach category and URL for playback
             playlist.append({**track, 'category': cat})
             if len(playlist) >= max_tracks:
@@ -170,6 +182,7 @@ def track_card(track, category):
 def general_user_dashboard():
     """Main dashboard for general users with music therapy features"""
     initialize_session_state()
+    catalog = get_catalog()
     
     user_info = st.session_state.user_info
     
@@ -266,9 +279,9 @@ def general_user_dashboard():
                 st.markdown("---")
             st.subheader("🌟 Featured Tracks")
             # Show a few tracks from each category
-            for cat in list(CATALOG.keys())[:2]:
+            for cat in list(catalog.keys())[:2]:
                 st.markdown(f"#### {cat}")
-                for track in CATALOG.get(cat, [])[:2]:
+                for track in catalog.get(cat, [])[:2]:
                     track_card(track, cat)
         
         with col2:
@@ -279,7 +292,8 @@ def general_user_dashboard():
         st.subheader("🎼 Music Library")
         
         # Category filter
-        available_categories = sorted(list(CATALOG.keys()))
+        catalog = get_catalog()
+        available_categories = sorted(list(catalog.keys()))
         selected_categories = st.multiselect(
             "Filter by Category",
             available_categories,
@@ -290,13 +304,13 @@ def general_user_dashboard():
         search_term = st.text_input("🔍 Search tracks", placeholder="Enter track name...")
         
         # Display tracks by category
-        if not CATALOG:
+        if not catalog:
             st.info("No songs available. Please add songs to Firestore.")
         for category in selected_categories:
-            if category in CATALOG:
+            if category in catalog:
                 st.markdown(f"### {category} 🎵")
                 
-                tracks = CATALOG.get(category, [])
+                tracks = catalog.get(category, [])
                 
                 # Filter by search term
                 if search_term:
