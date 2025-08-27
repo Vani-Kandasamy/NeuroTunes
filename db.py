@@ -126,6 +126,11 @@ class DDB:
         self._events = self._client.collection(cfg["events_col"]) 
         # Debug flag
         self._debug = bool(cfg.get("debug"))
+        # Last error storage for diagnostics
+        self._last_error: Optional[str] = None
+
+    def last_error(self) -> Optional[str]:
+        return self._last_error
 
     # Users
     def upsert_user(self, email: str, name: str) -> bool:
@@ -137,11 +142,12 @@ class DDB:
                 "user_email": email,
                 "name": name or "User",
                 "updated_at": _ts_ms(),
-            }, merge=True, timeout=15.0)
+            }, merge=True, timeout=30.0)
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore upsert_user failed: {e}")
+            self._last_error = str(e)
             return False
 
     # Recommendations
@@ -156,22 +162,24 @@ class DDB:
             }
             if cognitive_scores is not None:
                 data["cognitive_scores"] = cognitive_scores
-            self._recs.document(email).set(data, timeout=15.0)
+            self._recs.document(email).set(data, timeout=30.0)
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore put_recommendations failed: {e}")
+            self._last_error = str(e)
             return False
 
     def get_recommendations(self, email: str) -> Optional[Dict[str, Any]]:
         try:
             if not email:
                 return None
-            snap = self._recs.document(email).get(timeout=15.0)
+            snap = self._recs.document(email).get(timeout=30.0)
             return snap.to_dict() if snap.exists else None
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore get_recommendations failed: {e}")
+            self._last_error = str(e)
             return None
 
     # Events
@@ -184,11 +192,12 @@ class DDB:
                 "ts": _ts_ms(),
                 "event_type": event_type,
                 "payload": payload or {},
-            }, timeout=10.0)
+            }, timeout=20.0)
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore log_event failed: {e}")
+            self._last_error = str(e)
             return False
 
     # Songs (optional placeholders)
@@ -196,11 +205,12 @@ class DDB:
         try:
             if not song_id:
                 return False
-            self._songs.document(song_id).set({"song_id": song_id, **data}, timeout=20.0)
+            self._songs.document(song_id).set({"song_id": song_id, **data}, timeout=30.0)
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore put_song failed: {e}")
+            self._last_error = str(e)
             return False
 
     def list_songs(self, category: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -212,7 +222,7 @@ class DDB:
             if category:
                 query = query.where('category', '==', category)
             # Use a bounded timeout to avoid long hangs
-            stream = query.stream(timeout=20.0)
+            stream = query.stream(timeout=30.0)
             items: List[Dict[str, Any]] = []
             for doc in stream:
                 data = doc.to_dict() or {}
@@ -225,19 +235,21 @@ class DDB:
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore list_songs failed: {e}")
+            self._last_error = str(e)
             return []
 
     def health_check(self) -> bool:
         """Attempt a lightweight operation to validate Firestore connectivity."""
         try:
             # Try a no-op read on users collection
-            _ = self._users.limit(1).stream(timeout=10.0)
+            _ = self._users.limit(1).stream(timeout=20.0)
             for _doc in _:
                 break
             return True
         except GoogleAPIError as e:
             if self._debug:
                 st.error(f"Firestore health_check failed: {e}")
+            self._last_error = str(e)
             return False
 
     # -----------------------------
