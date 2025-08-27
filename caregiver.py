@@ -299,8 +299,8 @@ def run_predictions_on_uploaded_data():
                     st.success(f"Saved caregiver playlist recommendations for '{patient_id}'.")
                 else:
                     st.error("Failed to save recommendations to Firestore.")
-    else:
-        st.info("Enter a Patient ID (email) in EEG Upload to save playlist recommendations.")
+        else:
+            st.info("Enter a Patient ID (email) in EEG Upload to save playlist recommendations.")
     except Exception as e:
         st.error(f"Error running predictions: {e}")
 
