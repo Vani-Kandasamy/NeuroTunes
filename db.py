@@ -98,6 +98,18 @@ def _credentials_from_secrets(cfg: Dict[str, Any]) -> Optional[service_account.C
         return None
 
 
+def get_firestore_client() -> firestore.Client:
+    """Return a Firestore client built from st.secrets['gcp_service_account'].
+
+    This follows the requested pattern and uses our robust secrets parsing
+    that accepts either a TOML inline table or a JSON string.
+    """
+    sa = _get_sa_dict()
+    credentials = service_account.Credentials.from_service_account_info(sa)
+    project_id = sa.get("project_id")
+    return firestore.Client(credentials=credentials, project=project_id)
+
+
 class DDB:
     """Firestore-backed helper reusing the existing DDB interface.
 
