@@ -66,8 +66,21 @@ def main():
     name = (user.get("name") or "User").strip()
     if email:
         ddb = DDB()
-        ddb.upsert_user(email, name)
-        ddb.log_event(email, 'login', {})
+        ok_user = ddb.upsert_user(email, name)
+        ok_log = ddb.log_event(email, 'login', {})
+        # Save compact status for Admin diagnostics panel
+        try:
+            st.session_state["_login_fs_status"] = {
+                "ok_user": bool(ok_user),
+                "ok_log": bool(ok_log),
+                "last_error": ddb.last_error(),
+            }
+        except Exception:
+            st.session_state["_login_fs_status"] = {
+                "ok_user": bool(ok_user),
+                "ok_log": bool(ok_log),
+                "last_error": None,
+            }
 
     # Admin tools (optional): enable via .streamlit/secrets.toml -> [admin] enable = true
     try:
@@ -80,9 +93,20 @@ def main():
             if st.checkbox("Show Secrets Debug", value=False):
                 try:
                     st.write("Secrets keys:", list(st.secrets.keys()))
-                    st.write("Has firestore dict:", isinstance(st.secrets.get("firestore"), dict))
+                    # Neutral checks (no dependence on 'firestore' section)
+                    st.write("Has gcp_service_account:", "gcp_service_account" in st.secrets)
+                    st.write("Has [collections] mapping:", isinstance(st.secrets.get("collections"), dict))
                 except Exception as e:
                     st.error(f"Unable to read secrets: {e}")
+            # Firestore login write status
+            fs_stat = st.session_state.get("_login_fs_status")
+            if fs_stat:
+                if fs_stat["ok_user"] and fs_stat["ok_log"]:
+                    st.caption("Login recorded in Firestore.")
+                else:
+                    st.warning("Firestore write failed for login upsert/event.")
+                    if fs_stat.get("last_error"):
+                        st.caption(f"Last Firestore error: {fs_stat['last_error']}")
             if st.button("Health Check: Firestore"):
                 try:
                     ok = DDB().health_check()
