@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional
 from general_user import general_user_dashboard as music_therapy_dashboard
 from caregiver import caregiver_dashboard as ml_caregiver_dashboard
 import os
-from db import DDB
+from db import DDB, get_firestore_client
 
 # Configure Streamlit page
 st.set_page_config(
@@ -116,6 +116,15 @@ def main():
                         st.error("Firestore health check failed ❌")
                 except Exception as e:
                     st.error(f"Health check error: {e}")
+            # Raw Firestore write test using get_firestore_client()
+            if st.button("Raw Firestore Write (test)"):
+                try:
+                    db = get_firestore_client()
+                    doc_ref = db.collection("NeuroTunes_Users").document("user@example.com")
+                    doc_ref.set({"user_email": "user@example.com"})
+                    st.success("Raw write succeeded: NeuroTunes_Users/user@example.com")
+                except Exception as e:
+                    st.error(f"Raw write failed: {e}")
             if st.button("Seed Default Songs"):
                 try:
                     count = DDB().seed_initial_songs()
