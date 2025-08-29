@@ -59,29 +59,37 @@ pip install -r requirements.txt
 
 Create `.streamlit/secrets.toml` with Google OAuth and Firestore settings. Experimental auth is required; no simple fallback login exists.
 
+Firestore is configured using a root-level `gcp_service_account` entry (either an inline TOML table or a JSON string). Collection names are optional via `[collections]`.
+
 ```toml
-[default]
+# Google OAuth client ID (used by Streamlit experimental auth)
 GOOGLE_CLIENT_ID = "your-actual-client-id.apps.googleusercontent.com"
 
-[firestore]
-project_id = "your-gcp-project-id"
-debug = true  # optional
+# Required: Firestore service account (inline TOML table shown)
+gcp_service_account = { 
+  type = "service_account",
+  project_id = "your-gcp-project-id",
+  private_key_id = "...",
+  private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+  client_email = "svc@your-gcp-project-id.iam.gserviceaccount.com",
+  token_uri = "https://oauth2.googleapis.com/token"
+}
 
-[firestore.collections]
+# Optional: override project ID (falls back to service account project_id)
+GCP_PROJECT_ID = "your-gcp-project-id"
+
+# Optional: collection names
+[collections]
 users = "NeuroTunes_Users"
 songs = "NeuroTunes_Songs"
 recommendations = "NeuroTunes_Recommendations"
 events = "NeuroTunes_Events"
 
-# Optional: for local/dev use a service account instead of ADC
-[firestore.service_account]
-type = "service_account"
-project_id = "your-gcp-project-id"
-private_key_id = "..."
-private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-client_email = "svc@your-gcp-project-id.iam.gserviceaccount.com"
-token_uri = "https://oauth2.googleapis.com/token"
+# Optional: enable verbose errors from Firestore data layer
+debug = true
 ```
+
+You can also provide `gcp_service_account` as a JSON string instead of an inline table.
 
 Add `.streamlit/secrets.toml` to your `.gitignore` file to keep credentials secure.
 
@@ -105,6 +113,11 @@ streamlit run main.py
 ```
 
 The app will be available at `http://localhost:8501`
+
+### Notes
+
+- Default songs are automatically seeded into Firestore on first load if the `songs` collection is empty (no manual admin action required).
+- Admin/diagnostic UI for Firestore has been removed for simplicity.
 
 ## Required Files
 
