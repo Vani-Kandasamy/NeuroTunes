@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional
 from general_user import general_user_dashboard as music_therapy_dashboard
 from caregiver import caregiver_dashboard as ml_caregiver_dashboard
 import os
-from db import DDB, get_firestore_client
+from db import DDB
 
 # Configure Streamlit page
 st.set_page_config(
@@ -68,69 +68,18 @@ def main():
         ddb = DDB()
         ok_user = ddb.upsert_user(email, name)
         ok_log = ddb.log_event(email, 'login', {})
-        # Save compact status for Admin diagnostics panel
-        try:
-            st.session_state["_login_fs_status"] = {
-                "ok_user": bool(ok_user),
-                "ok_log": bool(ok_log),
-                "last_error": ddb.last_error(),
-            }
-        except Exception:
-            st.session_state["_login_fs_status"] = {
-                "ok_user": bool(ok_user),
-                "ok_log": bool(ok_log),
-                "last_error": None,
-            }
 
-    # Admin tools (optional): enable via .streamlit/secrets.toml -> [admin] enable = true
-    try:
-        admin_enabled = bool((st.secrets.get("admin", {}) or {}).get("enable")) or bool(st.secrets.get("FIRESTORE_ADMIN"))
-    except Exception:
-        admin_enabled = False
-    if admin_enabled:
-        with st.sidebar.expander("🛠️ Admin", expanded=False):
-            # Temporary debugging: secrets visibility
-            if st.checkbox("Show Secrets Debug", value=False):
-                try:
-                    st.write("Secrets keys:", list(st.secrets.keys()))
-                    # Neutral checks (no dependence on 'firestore' section)
-                    st.write("Has gcp_service_account:", "gcp_service_account" in st.secrets)
-                    st.write("Has [collections] mapping:", isinstance(st.secrets.get("collections"), dict))
-                except Exception as e:
-                    st.error(f"Unable to read secrets: {e}")
-            # Firestore login write status
-            fs_stat = st.session_state.get("_login_fs_status")
-            if fs_stat:
-                if fs_stat["ok_user"] and fs_stat["ok_log"]:
-                    st.caption("Login recorded in Firestore.")
-                else:
-                    st.warning("Firestore write failed for login upsert/event.")
-                    if fs_stat.get("last_error"):
-                        st.caption(f"Last Firestore error: {fs_stat['last_error']}")
-            if st.button("Health Check: Firestore"):
-                try:
-                    ok = DDB().health_check()
-                    if ok:
-                        st.success("Firestore health OK ✔️")
-                    else:
-                        st.error("Firestore health check failed ❌")
-                except Exception as e:
-                    st.error(f"Health check error: {e}")
-            # Raw Firestore write test using get_firestore_client()
-            if st.button("Raw Firestore Write (test)"):
-                try:
-                    db = get_firestore_client()
-                    doc_ref = db.collection("NeuroTunes_Users").document("user@example.com")
-                    doc_ref.set({"user_email": "user@example.com"})
-                    st.success("Raw write succeeded: NeuroTunes_Users/user@example.com")
-                except Exception as e:
-                    st.error(f"Raw write failed: {e}")
-            if st.button("Seed Default Songs"):
-                try:
-                    count = DDB().seed_initial_songs()
-                    st.success(f"Seeded {count} songs into Firestore ✔️")
-                except Exception as e:
-                    st.error(f"Seeding failed: {e}")
+    # One-time automatic seeding: if songs dataset is empty, seed defaults
+    if not st.session_state.get("_seed_done"):
+        try:
+            ddb_seed = DDB()
+            has_any = len(ddb_seed.list_songs(limit=1)) > 0
+            if not has_any:
+                _ = ddb_seed.seed_initial_songs()
+        except Exception:
+            pass
+        finally:
+            st.session_state["_seed_done"] = True
 
     # Route by role based on email
     user_email = (user.get("email") or "").strip()
