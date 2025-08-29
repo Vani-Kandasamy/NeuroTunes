@@ -13,7 +13,6 @@ A Streamlit web application with Google OAuth authentication that routes users t
 ### Music Therapy Features (General Users)
 - **Melody Database**: 45+ curated melodies across 5 music genres (Classical, Rock, Pop, Rap, R&B)
 - **Interactive Music Player**: Play/pause controls and simple playback UI
-- **My Playlists (Category-Based)**: Personalized playlist built from your most-listened categories in the current catalog
 - **Trend Analysis**: Category listening summary plus "Top Track This Session"
 - **Caregiver-Linked Recs**: If a caregiver saved recommendations for your email, they surface on your dashboard
 - **Genre-based Organization**: Browse music by therapeutic music genres
@@ -149,10 +148,7 @@ The app uses Streamlit experimental auth (Google Sign-In). If experimental auth 
 ### General Users (Patients)
 - **Music Therapy Portal**: Access to 5-genre melody database (Classical, Rock, Pop, Rap, R&B)
 - **Interactive Music Player**: Full-featured audio player with controls
-- **Neural Engagement Tracking**: Monitor personal brain response to music
-- **Smart Recommendations**: AI-generated playlists based on engagement patterns
 - **Personal Analytics**: View listening trends and neural engagement data
-- **Progress Tracking**: Monitor therapeutic progress over time
 
 ## Security Notes
 
