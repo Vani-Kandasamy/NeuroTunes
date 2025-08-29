@@ -204,7 +204,7 @@ def general_user_dashboard():
         st.markdown("### 🎼 Navigation")
         page = st.selectbox(
             "Select Feature",
-            ["Dashboard", "Music Library", "Trend Analysis"]
+            ["Dashboard", "Music Library", "Trend Analysis", "My Playlists"]
         )
         
         st.markdown("---")
@@ -324,32 +324,44 @@ def general_user_dashboard():
                 
                 st.markdown("---")
     
-    # 'My Playlists' page removed per request; keep route disabled for safety
-    elif False and page == "My Playlists":
-        st.subheader("🎵 Smart Playlists")
-        
-        df = st.session_state.neural_data
-        
-        if not df.empty:
-            # Find user's top track
-            top_track_data = df.loc[df['neural_engagement'].idxmax()]
-            top_track = None
-            
-            # Find the actual track object
-            for category, tracks in MELODY_DATABASE.items():
-                for track in tracks:
-                    if track['id'] == top_track_data['track_id']:
-                        top_track = track
-                        break
-            
-            if top_track:
-                st.markdown(f"### 🌟 Based on your top track: **{top_track['name']}**")
-                st.markdown(f"Neural Engagement Score: **{top_track_data['neural_engagement']:.1f}/10**")
-                
-                st.markdown("### 🎼 Recommended Playlist")
-                st.info("Playlist recommendations are temporarily disabled.")
+    elif page == "My Playlists":
+        st.subheader("🎵 Smart Playlists (Category-Based)")
+        history = st.session_state.get('listening_history', [])
+        catalog = get_catalog()
+        if not catalog:
+            st.info("No songs available yet.")
+        elif not history:
+            st.info("Listen to some tracks first to build your personalized playlist.")
         else:
-            st.info("Listen to some tracks first to generate personalized playlists!")
+            hist_df = pd.DataFrame(history)
+            if 'category' not in hist_df.columns or hist_df['category'].isna().all():
+                st.info("No category information found in your listening history.")
+            else:
+                # Count plays per category
+                cat_counts = hist_df['category'].value_counts()
+                st.markdown("### 🔝 Top Categories You Listen To")
+                st.write(cat_counts.to_frame('plays'))
+
+                # Build a playlist from top categories (up to 8 tracks)
+                max_tracks = 8
+                playlist = []
+                # Iterate categories by popularity
+                for cat, _cnt in cat_counts.items():
+                    tracks = catalog.get(cat, [])
+                    for t in tracks:
+                        # Attach category for playback widget
+                        playlist.append({**t, 'category': cat})
+                        if len(playlist) >= max_tracks:
+                            break
+                    if len(playlist) >= max_tracks:
+                        break
+
+                if playlist:
+                    st.markdown("### 🎼 Recommended For You")
+                    for tr in playlist:
+                        track_card(tr, tr['category'])
+                else:
+                    st.info("No tracks available in your preferred categories yet.")
     
     # Neural Analytics page removed
     
@@ -365,6 +377,28 @@ def general_user_dashboard():
             # Ensure timestamp column is datetime
             if 'timestamp' in hist_df.columns:
                 hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'], errors='coerce')
+
+            # Top performing track for this login session
+            try:
+                sessions = st.session_state.get('login_sessions', [])
+                session_start = sessions[-1] if sessions else None
+                df_session = hist_df
+                if session_start is not None and 'timestamp' in hist_df.columns:
+                    df_session = hist_df[hist_df['timestamp'] >= pd.to_datetime(session_start, errors='coerce')]
+                if 'track' in df_session.columns and not df_session.empty:
+                    # Extract track name safely
+                    df_session = df_session.copy()
+                    df_session['track_name'] = df_session['track'].apply(
+                        lambda x: (x.get('name') if isinstance(x, dict) else None)
+                    )
+                    name_counts = df_session['track_name'].dropna().value_counts()
+                    if not name_counts.empty:
+                        top_name = name_counts.idxmax()
+                        top_count = int(name_counts.max())
+                        st.markdown("### 🌟 Top Track This Session")
+                        st.info(f"{top_name} — Plays: {top_count}")
+            except Exception:
+                pass
             
             # Category distribution (counts)
             if 'category' in hist_df.columns and not hist_df['category'].isna().all():
