@@ -204,7 +204,7 @@ def general_user_dashboard():
         st.markdown("### 🎼 Navigation")
         page = st.selectbox(
             "Select Feature",
-            ["Dashboard", "Music Library", "Trend Analysis", "My Playlists"]
+            ["Dashboard", "Music Library", "Trend Analysis"]
         )
         
         st.markdown("---")
@@ -324,44 +324,9 @@ def general_user_dashboard():
                 
                 st.markdown("---")
     
-    elif page == "My Playlists":
-        st.subheader("🎵 Smart Playlists (Category-Based)")
-        history = st.session_state.get('listening_history', [])
-        catalog = get_catalog()
-        if not catalog:
-            st.info("No songs available yet.")
-        elif not history:
-            st.info("Listen to some tracks first to build your personalized playlist.")
-        else:
-            hist_df = pd.DataFrame(history)
-            if 'category' not in hist_df.columns or hist_df['category'].isna().all():
-                st.info("No category information found in your listening history.")
-            else:
-                # Count plays per category
-                cat_counts = hist_df['category'].value_counts()
-                st.markdown("### 🔝 Top Categories You Listen To")
-                st.write(cat_counts.to_frame('plays'))
-
-                # Build a playlist from top categories (up to 8 tracks)
-                max_tracks = 8
-                playlist = []
-                # Iterate categories by popularity
-                for cat, _cnt in cat_counts.items():
-                    tracks = catalog.get(cat, [])
-                    for t in tracks:
-                        # Attach category for playback widget
-                        playlist.append({**t, 'category': cat})
-                        if len(playlist) >= max_tracks:
-                            break
-                    if len(playlist) >= max_tracks:
-                        break
-
-                if playlist:
-                    st.markdown("### 🎼 Recommended For You")
-                    for tr in playlist:
-                        track_card(tr, tr['category'])
-                else:
-                    st.info("No tracks available in your preferred categories yet.")
+    # 'My Playlists' page removed per request; keep route disabled for safety
+    # elif page == "My Playlists":
+    #     pass
     
     # Neural Analytics page removed
     
