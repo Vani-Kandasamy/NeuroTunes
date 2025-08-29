@@ -27,12 +27,9 @@ A Streamlit web application with Google OAuth authentication that routes users t
   - **Focus Score**: `Theta/Beta Ratio` - measures sustained attention and concentration
   - **Relaxation Score**: `Mean(Alpha+Theta) - Mean(Beta+Gamma)` - measures calmness and passive mental states
 - **Multi-Patient Support**: Manage data for multiple patients with individual tracking
-- **Patient Selection Interface**: Choose existing patients or create new patient profiles
 - **ML Model Performance Dashboard**: View model accuracy, capabilities, and performance metrics
 - **Cognitive Insights Visualization**: Interactive charts showing brain response patterns per patient
 - **Real EEG Data Upload**: CSV import functionality for authentic EEG datasets (no synthetic data)
-- **Patient Summary Dashboard**: Overview of all patients with average cognitive scores
-- **Comprehensive Reporting**: Export detailed patient analysis and ML predictions
 
 ## Setup Instructions
 
@@ -45,51 +42,59 @@ pip install -r requirements.txt
 ### 2. Google OAuth Setup
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing one
-3. Enable the Google+ API
-4. Create OAuth 2.0 credentials:
-   - Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client IDs"
-   - Choose "Web application"
-   - Add authorized origins (e.g., `http://localhost:8501`)
-   - Add authorized redirect URIs (e.g., `http://localhost:8501`)
+2. Go to Google Cloud Console → Create/select a project.
+3. Set up OAuth Consent Screen → Configure app details & scopes.
+4. In Navigation menu -> APIs & Services -> OAuth Consent Screen
+5. Create OAuth Credentials → Select “Web Application” and set redirect URIs.
+6. In Navigation menu -> APIs & Services -> Credentials
+7. In Create Credentials -> Create OAuth Client Under "Application type", select "Web application".
+8. Under "Authorized redirect URIs", add the Path where Google will redirect users after they have authenticated
+   Redirect URI for this app: https://braintunes.streamlit.app/oauth2callback
 
-### 3. Streamlit Secrets Configuration (Required)
 
-Create `.streamlit/secrets.toml` with Google OAuth and Firestore settings. Experimental auth is required; no simple fallback login exists.
+### 3. Creating a Firestore database in the Google Cloud Console
 
-Firestore is configured using a root-level `gcp_service_account` entry (either an inline TOML table or a JSON string). Collection names are optional via `[collections]`.
+
+1. In the left-hand navigation menu, click on "APIs & Services" > "Library".
+2. In the search bar, type "Firestore" and select "Cloud Firestore API" from the results.
+3. Click the "Enable" button to enable the Firestore API for your project.
+4. In the left-hand navigation menu, scroll down and click on "Firestore".
+5. Choose a Database Location closest to you
+6. Database id should be (default) - Don’t change it
+7. Choose Database Mode as Native
+8. Create the database
+9. Set up initial security rules to control access to your database.
+
+### 4. Creating Service account for the project
+1. Creating a service account in Google Cloud Console is crucial for managing permissions and enabling secure, programmatic access to your projects
+2. Select the project for which you want to create a service account.
+3. In the left-hand sidebar, click on "IAM & Admin" and then select "Service Accounts"
+4. Click on the "Create Service Account" button at the top of the Service Accounts page
+5. Enter a name for your service account and Service Account ID will be automatically created
+6. On the Permissions page, add a role to the service account (Owner)
+7. Generate Service Account Key: Navigate to the "Keys" section and click "Add Key" > "Create New Key".
 
 ```toml
-# Google OAuth client ID (used by Streamlit experimental auth)
-GOOGLE_CLIENT_ID = "your-actual-client-id.apps.googleusercontent.com"
+[auth]
+redirect_uri = "https://braintunes.streamlit.app/oauth2callback"  
+cookie_secret = "123"
+client_id = "copy from google cloud console"  
+client_secret = "copy from google cloud console"  
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
 
-# Required: Firestore service account (inline TOML table shown)
-gcp_service_account = { 
-  type = "service_account",
-  project_id = "your-gcp-project-id",
-  private_key_id = "...",
-  private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
-  client_email = "svc@your-gcp-project-id.iam.gserviceaccount.com",
-  token_uri = "https://oauth2.googleapis.com/token"
-}
-
-# Optional: override project ID (falls back to service account project_id)
-GCP_PROJECT_ID = "your-gcp-project-id"
-
-# Optional: collection names
-[collections]
-users = "NeuroTunes_Users"
-songs = "NeuroTunes_Songs"
-recommendations = "NeuroTunes_Recommendations"
-events = "NeuroTunes_Events"
-
-# Optional: enable verbose errors from Firestore data layer
-debug = true
+[gcp_service_account]
+type = "service_account"
+project_id = "copy from json downloaded after creating service account"
+private_key_id = ""
+private_key = ""
+client_email = ""
+client_id = ""
+auth_uri = ""
+token_uri = ""
+auth_provider_x509_cert_url = ""
+client_x509_cert_url = ""
 ```
 
-You can also provide `gcp_service_account` as a JSON string instead of an inline table.
-
-Add `.streamlit/secrets.toml` to your `.gitignore` file to keep credentials secure.
 
 ### 4. Configure Caregiver Emails
 
@@ -110,13 +115,9 @@ CAREGIVER_EMAILS = [
 streamlit run main.py
 ```
 
-The app will be available at `http://localhost:8501`
-
 ### Notes
 
 - Default songs are automatically seeded into Firestore on first load if the `songs` collection is empty (no manual admin action required).
-- Admin/diagnostic UI for Firestore has been removed for simplicity.
-- Patient engagement metrics remain available in the caregiver dashboards; general user engagement visuals have been removed.
 
 ## Required Files
 
