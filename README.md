@@ -12,12 +12,10 @@ A Streamlit web application with Google OAuth authentication that routes users t
 
 ### Music Therapy Features (General Users)
 - **Melody Database**: 45+ curated melodies across 5 music genres (Classical, Rock, Pop, Rap, R&B)
-- **Interactive Music Player**: Play/pause controls, progress bars, volume sliders
-- **Neural Engagement Tracking**: Monitor brain response to different melodies
-- **Smart Playlist Generation**: AI-powered recommendations based on highest engagement scores
-- **Visual Analytics**: Charts and graphs showing listening patterns and neural engagement
-- **Trend Analysis**: Time-based patterns, weekly trends, and completion rates
-- **Export Reports**: Download detailed analytics in JSON or CSV format
+- **Interactive Music Player**: Play/pause controls and simple playback UI
+- **My Playlists (Category-Based)**: Personalized playlist built from your most-listened categories in the current catalog
+- **Trend Analysis**: Category listening summary plus "Top Track This Session"
+- **Caregiver-Linked Recs**: If a caregiver saved recommendations for your email, they surface on your dashboard
 - **Genre-based Organization**: Browse music by therapeutic music genres
 
 ### ML-Powered Caregiver Features
@@ -118,6 +116,7 @@ The app will be available at `http://localhost:8501`
 
 - Default songs are automatically seeded into Firestore on first load if the `songs` collection is empty (no manual admin action required).
 - Admin/diagnostic UI for Firestore has been removed for simplicity.
+- Patient engagement metrics remain available in the caregiver dashboards; general user engagement visuals have been removed.
 
 ## Required Files
 
