@@ -1,203 +1,389 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import time
+from datetime import datetime
+from typing import Dict, List, Optional, Any
 from db import DDB
 
-def _load_catalog_from_store() -> dict:
-    """Load songs from Firestore and group by category.
+# Default categories for new users
+DEFAULT_CATEGORIES = ["Classical", "Rock", "Pop", "Rap", "R&B"]
 
-    Returns an empty dict on failure and surfaces a warning to the user.
-    """
-    try:
-        by_cat = {}
-        ddb = DDB()
-        items = ddb.list_songs()
-        for it in items:
-            cat = it.get('category') or 'Uncategorized'
-            song_id = it.get('id') or it.get('song_id')
-            if song_id is None:
-                continue
-            it['id'] = song_id
-            by_cat.setdefault(cat, []).append(it)
-        return by_cat
-    except Exception as e:
-        st.warning("Unable to load songs from the database right now. Please try again later.")
-        return {}
-
-# Lazily-loaded catalog to avoid blocking at import time
+# Lazy-loaded catalog
 CATALOG = {}
 
-def get_catalog() -> dict:
-    """Return cached catalog; load from store on first access."""
+def _load_catalog_from_store() -> Dict[str, List[Dict[str, Any]]]:
+    """Load and organize songs from Firestore by category."""
+    try:
+        by_cat = {cat: [] for cat in DEFAULT_CATEGORIES}
+        by_cat["Uncategorized"] = []
+        
+        for item in DDB().list_songs() or []:
+            cat = (item.get('category') or 'Uncategorized').strip()
+            if cat not in by_cat:
+                by_cat[cat] = []
+            if 'id' not in item and 'song_id' in item:
+                item['id'] = item['song_id']
+            if 'id' in item:
+                by_cat[cat].append(item)
+        return {k: v for k, v in by_cat.items() if v}
+    except Exception as e:
+        st.warning("Unable to load songs. Please try again later.")
+        return {}
+
+def get_catalog() -> Dict[str, List[Dict[str, Any]]]:
+    """Return cached catalog, loading from store on first access."""
     global CATALOG
     if not CATALOG:
         CATALOG = _load_catalog_from_store()
     return CATALOG
 
 def initialize_session_state():
-    """Initialize session state variables"""
-    if 'current_track' not in st.session_state:
-        st.session_state.current_track = None
-    if 'is_playing' not in st.session_state:
-        st.session_state.is_playing = False
-    if 'playback_position' not in st.session_state:
-        st.session_state.playback_position = 0
-    if 'listening_history' not in st.session_state:
-        st.session_state.listening_history = []
-    # Neural engagement data removed; keep placeholder for compatibility if referenced
-    if 'neural_data' not in st.session_state:
-        st.session_state.neural_data = pd.DataFrame()
-    if 'user_preferences' not in st.session_state:
-        st.session_state.user_preferences = {"volume": 50, "preferred_categories": ["Classical"]}
-    # Login session tracking
-    if 'login_sessions' not in st.session_state:
-        st.session_state.login_sessions = []  # list[datetime]
-    if 'session_started' not in st.session_state:
-        st.session_state.session_started = False
+    """Initialize session state variables."""
+    defaults = {
+        'current_track': None,
+        'is_playing': False,
+        'playback_position': 0,
+        'listening_history': [],
+        'user_preferences': {
+            'volume': 50,
+            'preferred_categories': DEFAULT_CATEGORIES[:2]
+        },
+        'login_sessions': [],
+        'session_started': False,
+        'neural_data': pd.DataFrame()
+    }
+    
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-# Sample neural data generation removed
-
-def get_caregiver_scores_for_user(user_email: str):
-    """Return caregiver-provided cognitive scores dict for this user if available."""
-    if not user_email:
+def get_caregiver_scores(email: str) -> Optional[Dict[str, float]]:
+    """Retrieve caregiver-provided cognitive scores for a user."""
+    if not email:
         return None
-    ddb = DDB()
-    entry = ddb.get_recommendations(user_email)
-    if not entry or not isinstance(entry, dict):
-        return None
-    scores = entry.get('cognitive_scores')
-    if not isinstance(scores, dict):
-        return None
-    return scores
+    
+    try:
+        entry = DDB().get_recommendations(email)
+        if isinstance(entry, dict):
+            scores = entry.get('cognitive_scores')
+            if isinstance(scores, dict):
+                return scores
+    except Exception:
+        pass
+    return None
 
-def get_recommended_playlist_for_user(user_email: str, max_tracks: int = 6):
-    """Build a playlist based on caregiver category rankings for this user.
-
-    Strategy: take categories ranked by caregiver and pick up to ceil(weight*max_tracks)
-    tracks from each category (at least 1), preserving database order.
-    """
-    if not user_email:
+def get_recommended_playlist(email: str, max_tracks: int = 6) -> List[Dict[str, Any]]:
+    """Generate a playlist based on caregiver recommendations."""
+    if not email:
         return []
-    entry = DDB().get_recommendations(user_email)
-    if not entry or not isinstance(entry, dict):
-        return []
-    ranked = entry.get('categories') or []
-    if not ranked:
-        return []
-    # Normalize scores
-    catalog = get_catalog()
-    total = float(sum((r.get('score') or 0.0) for r in ranked)) or 1.0
-    ranked = [
-        {
-            'category': str(r.get('category')),
-            'score': float((r.get('score') or 0.0) / total)
-        }
-        for r in ranked
-        if str(r.get('category')) in catalog
-    ]
-    # Allocate tracks per category
-    import math
-    alloc = []
-    remaining = max_tracks
-    for i, r in enumerate(ranked):
-        count = max(1, int(round(r['score'] * max_tracks)))
-        # Ensure we don't exceed remaining
-        if i == len(ranked) - 1:
-            count = max(1, remaining)
-        count = min(count, remaining)
-        alloc.append((r['category'], count))
-        remaining -= count
-        if remaining <= 0:
-            break
-    # Build list of track dicts with category attached
-    playlist = []
-    for cat, cnt in alloc:
-        for track in catalog.get(cat, [])[:cnt]:
-            # Attach category and URL for playback
-            playlist.append({**track, 'category': cat})
-            if len(playlist) >= max_tracks:
+    
+    try:
+        entry = DDB().get_recommendations(email)
+        if not isinstance(entry, dict):
+            return []
+            
+        catalog = get_catalog()
+        ranked = []
+        
+        # Process and normalize category scores
+        for r in (entry.get('categories') or []):
+            cat = str(r.get('category', '')).strip()
+            if cat in catalog:
+                score = float(r.get('score', 0.0))
+                if score > 0:
+                    ranked.append((cat, score))
+        
+        if not ranked:
+            return []
+            
+        # Sort by score and allocate tracks
+        ranked.sort(key=lambda x: -x[1])
+        total = sum(score for _, score in ranked)
+        if total <= 0:
+            return []
+            
+        # Allocate tracks proportionally
+        playlist = []
+        remaining = max_tracks
+        
+        for cat, score in ranked:
+            if remaining <= 0:
                 break
-        if len(playlist) >= max_tracks:
-            break
-    return playlist
-
-def music_player_widget(track):
-    """Create a music player widget with real audio playback."""
-    if track:
-        # Basic info
-        st.write(f"**{track['name']}**")
-        st.caption(f"Duration: {track['duration']//60}:{track['duration']%60:02d} • BPM: {track['bpm']}")
-
-        # Play only if the track has an explicit URL configured
-        audio_url = track.get('url')
-        if audio_url:
-            st.audio(audio_url, format="audio/mp3")
-        else:
-            st.warning("No audio URL configured for this track yet. Please add a URL to play.")
-
-def track_card(track, category):
-    """Create a track card with play button and details"""
-    with st.container():
-        col1, col2, col3 = st.columns([1, 4, 1])
-        
-        with col1:
-            if st.button("▶️", key=f"card_play_{track['id']}"):
-                # Attach category to track so the audio URL can be resolved
-                st.session_state.current_track = {**track, 'category': category}
-                st.session_state.is_playing = True
-                st.session_state.playback_position = 0
                 
-                # Add to listening history
-                st.session_state.listening_history.append({
-                    'timestamp': datetime.now(),
-                    'track': track,
-                    'category': category
-                })
-                # Log play event to Firestore
-                user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
-                DDB().log_event(user_email, 'play', {
-                    'track_id': track.get('id'),
-                    'name': track.get('name'),
-                    'category': category,
-                })
+            # Calculate number of tracks for this category
+            count = max(1, min(remaining, int(round(score / total * max_tracks))))
+            count = min(count, len(catalog[cat]), remaining)
+            
+            # Add tracks to playlist
+            playlist.extend([
+                {**track, 'category': cat} 
+                for track in catalog[cat][:count]
+            ])
+            remaining -= count
+            
+        return playlist[:max_tracks]
         
-        with col2:
+    except Exception as e:
+        if st.session_state.get('debug', False):
+            st.error(f"Error generating playlist: {e}")
+        return []
+
+def _log_play_event(track: Dict[str, Any], category: str):
+    """Log a play event to the database."""
+    user_email = st.session_state.get('user_info', {}).get('email', '')
+    if user_email and track and 'id' in track:
+        DDB().log_event(user_email, 'play', {
+            'track_id': track['id'],
+            'name': track.get('name', ''),
+            'category': category
+        })
+
+def music_player_widget(track: Dict[str, Any]):
+    """Render an audio player for the given track."""
+    if not track:
+        return
+        
+    st.write(f"**{track.get('name', 'Unknown Track')}**")
+    
+    # Format duration (in seconds) to MM:SS
+    duration = int(track.get('duration', 0))
+    duration_str = f"{duration//60}:{duration%60:02d}"
+    
+    # Display track metadata
+    meta = [
+        f"Duration: {duration_str}" if duration else None,
+        f"BPM: {track['bpm']}" if track.get('bpm') else None,
+        f"Key: {track['key']}" if track.get('key') else None
+    ]
+    st.caption(" • ".join(filter(None, meta)))
+    
+    # Audio player
+    if track.get('url'):
+        st.audio(track['url'], format="audio/mp3")
+    else:
+        st.warning("No audio URL available for this track.")
+
+def track_card(track: Dict[str, Any], category: str):
+    """Render a track card with play button and metadata."""
+    if not track:
+        return
+        
+    with st.container():
+        cols = st.columns([1, 4, 1])
+        
+        # Play button
+        with cols[0]:
+            if st.button("▶️", key=f"play_{track['id']}"):
+                current = st.session_state.current_track
+                if not current or current.get('id') != track.get('id'):
+                    st.session_state.current_track = {**track, 'category': category}
+                    st.session_state.is_playing = True
+                    st.session_state.playback_position = 0
+                    
+                    # Add to listening history
+                    st.session_state.listening_history.append({
+                        'timestamp': datetime.now(),
+                        'track': track,
+                        'category': category
+                    })
+                    
+                    # Log the play event
+                    _log_play_event(track, category)
+        
+        # Track info
+        with cols[1]:
             st.markdown(f"""
-            **{track['name']}**  
-            Category: {category} | Duration: {track['duration']//60}:{track['duration']%60:02d} | BPM: {track['bpm']}  
-            Key: {track['key']}
+                **{track.get('name', 'Unknown Track')}**  
+                Category: {category} | 
+                Duration: {int(track.get('duration', 0))//60}:{int(track.get('duration', 0))%60:02d} | 
+                BPM: {track.get('bpm', 'N/A')}  
+                Key: {track.get('key', 'N/A')}
             """)
-            # If this track is currently selected, render the audio player here
-            if st.session_state.current_track and st.session_state.current_track.get('id') == track['id']:
-                music_player_widget(st.session_state.current_track)
+            
+            # Show audio player if this is the current track
+            current = st.session_state.current_track
+            if current and current.get('id') == track.get('id'):
+                music_player_widget(current)
         
-        with col3:
+        # Empty column for layout
+        with cols[2]:
             st.empty()
 
-
-def general_user_dashboard():
-    """Main dashboard for general users with music therapy features"""
-    initialize_session_state()
+def _render_dashboard():
+    """Render the main dashboard view."""
     catalog = get_catalog()
+    user_info = st.session_state.get('user_info', {})
     
-    user_info = st.session_state.user_info
-    
-    st.title("🎵 Music Therapy Portal")
-    st.markdown(f"Welcome, **{user_info['name']}**! Discover your optimal melodies for cognitive enhancement.")
-    
-    # Record a login session timestamp once per app session and log to Firestore
+    # Record login session if not already done
     if not st.session_state.session_started:
         st.session_state.login_sessions.append(datetime.now())
         st.session_state.session_started = True
-        user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
-        user_name = (st.session_state.get('user_info', {}) or {}).get('name', 'User')
-        ddb = DDB()
-        ddb.log_event(user_email, 'login', {})
-        ddb.upsert_user(user_email, user_name)
+        
+        # Log login event
+        email = user_info.get('email', '')
+        if email:
+            DDB().log_event(email, 'login', {})
+            DDB().upsert_user(email, user_info.get('name', 'User'))
+    
+    # Now Playing section
+    if st.session_state.current_track:
+        st.subheader("🎵 Now Playing")
+        music_player_widget(st.session_state.current_track)
+        st.markdown("---")
+    
+    # Session info and recommendations
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Caregiver recommendations
+        email = user_info.get('email', '')
+        scores = get_caregiver_scores(email)
+        recommendations = get_recommended_playlist(email)
+        
+        if scores or recommendations:
+            st.subheader("🩺 Recommended by Caregiver")
+            
+            # Display scores if available
+            if scores:
+                cols = st.columns(3)
+                metrics = [
+                    ('Engagement', 'engagement'),
+                    ('Focus', 'focus'),
+                    ('Relaxation', 'relaxation')
+                ]
+                
+                for (label, key), col in zip(metrics, cols):
+                    if key in scores and scores[key] is not None:
+                        col.metric(label, f"{scores[key]:.1f}/10")
+                
+                st.markdown("---")
+            
+            # Display recommended tracks
+            if recommendations:
+                for track in recommendations:
+                    track_card(track, track.get('category', 'Uncategorized'))
+                st.markdown("---")
+        
+        # Featured tracks
+        st.subheader("🌟 Featured Tracks")
+        for cat in list(catalog.keys())[:2]:
+            st.markdown(f"#### {cat}")
+            for track in catalog.get(cat, [])[:2]:
+                track_card(track, cat)
+    
+    with col2:
+        st.subheader("🎯 Tips")
+        st.info("""
+            - Explore different music categories to find what works best for you
+            - Try listening to recommended tracks from your caregiver
+            - Take breaks between listening sessions for optimal results
+        """)
+
+def _render_music_library():
+    """Render the music library view."""
+    catalog = get_catalog()
+    
+    # Category filter
+    available_categories = sorted(catalog.keys())
+    selected_categories = st.multiselect(
+        "Filter by Category",
+        available_categories,
+        default=available_categories[:2]
+    )
+    
+    # Search
+    search_term = st.text_input("🔍 Search tracks", "")
+    search_lower = search_term.lower().strip()
+    
+    # Display tracks
+    if not catalog:
+        st.info("No songs available. Please check back later.")
+        return
+    
+    for category in selected_categories:
+        tracks = catalog.get(category, [])
+        
+        # Apply search filter
+        if search_term:
+            tracks = [
+                t for t in tracks 
+                if search_lower in t.get('name', '').lower()
+            ]
+        
+        if not tracks:
+            continue
+            
+        st.markdown(f"### {category} 🎵")
+        for track in tracks:
+            track_card(track, category)
+        
+        st.markdown("---")
+
+def _render_trend_analysis():
+    """Render the trend analysis view."""
+    history = st.session_state.get('listening_history', [])
+    
+    if not history:
+        st.info("No listening activity yet. Play some tracks to see your trends!")
+        return
+    
+    # Convert to DataFrame for analysis
+    df = pd.DataFrame([{
+        'timestamp': h.get('timestamp'),
+        'track_name': h.get('track', {}).get('name', 'Unknown'),
+        'category': h.get('category', 'Uncategorized'),
+        'duration': h.get('track', {}).get('duration', 0)
+    } for h in history])
+    
+    # Top tracks this session
+    if not df.empty:
+        st.subheader("🌟 Top Tracks This Session")
+        top_tracks = df['track_name'].value_counts().head(3)
+        
+        for track, count in top_tracks.items():
+            st.metric(f"{track}", f"Played {count} times")
+        
+        st.markdown("---")
+    
+    # Category distribution
+    if 'category' in df.columns:
+        st.subheader("📊 Category Distribution")
+        cat_counts = df['category'].value_counts()
+        
+        if not cat_counts.empty:
+            fig = px.pie(
+                names=cat_counts.index,
+                values=cat_counts.values,
+                title='Plays by Category'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    # Listening history timeline
+    if 'timestamp' in df.columns:
+        st.subheader("⏱️ Listening History")
+        
+        # Group by date and count plays
+        df['date'] = pd.to_datetime(df['timestamp']).dt.date
+        timeline = df.groupby('date').size().reset_index(name='plays')
+        
+        if not timeline.empty:
+            fig = px.line(
+                timeline,
+                x='date',
+                y='plays',
+                title='Daily Plays',
+                labels={'date': 'Date', 'plays': 'Number of Plays'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+def general_user_dashboard():
+    """Main entry point for the general user dashboard."""
+    initialize_session_state()
+    
+    # Page title and welcome message
+    user_name = st.session_state.get('user_info', {}).get('name', 'User')
+    st.title("🎵 Music Therapy Portal")
+    st.markdown(f"Welcome, **{user_name}**! Discover music for cognitive enhancement.")
     
     # Sidebar navigation
     with st.sidebar:
@@ -211,177 +397,31 @@ def general_user_dashboard():
         st.markdown("### 🎛️ Quick Controls")
         
         # Current track display
-        if st.session_state.current_track:
-            st.markdown("**Now Playing:**")
-            st.write(st.session_state.current_track['name'])
+        current = st.session_state.current_track
+        if current:
+            st.markdown(f"**Now Playing:** {current.get('name', 'Unknown')}")
         
-        # Playback control
+        # Stop button
         if st.button("⏹️ Stop", use_container_width=True):
-            st.session_state.current_track = None
-            st.session_state.is_playing = False
-            st.session_state.playback_position = 0
-            # Log stop event to Firestore
-            user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
-            DDB().log_event(user_email, 'stop', {})
-        
-        st.markdown("---")
-        # Sign out handled centrally in main/auth sidebar
+            if st.session_state.current_track:
+                # Log stop event
+                email = st.session_state.get('user_info', {}).get('email', '')
+                if email:
+                    DDB().log_event(email, 'stop', {
+                        'track_id': current.get('id'),
+                        'name': current.get('name')
+                    if current else None})
+                
+                # Reset player state
+                st.session_state.current_track = None
+                st.session_state.is_playing = False
+                st.session_state.playback_position = 0
+                st.experimental_rerun()
     
-    # Main content
+    # Main content area
     if page == "Dashboard":
-        # Music player section
-        if st.session_state.current_track:
-            st.subheader("🎵 Now Playing")
-            music_player_widget(st.session_state.current_track)
-            st.markdown("---")
-        
-        # Removed neural engagement statistics from Dashboard
-        
-        # Session activity summary
-        sessions = len(st.session_state.get('login_sessions', []))
-        if sessions:
-            st.markdown("### 👤 Session Activity")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.metric("Login Sessions", sessions)
-            with c2:
-                st.caption(f"Last login: {st.session_state['login_sessions'][-1].strftime('%Y-%m-%d %H:%M')}")
-        
-        # Caregiver-linked recommendations and featured tracks
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Recommended by caregiver (if any)
-            user_email = (st.session_state.get('user_info', {}) or {}).get('email', '')
-            # Show caregiver-provided cognitive scores if present
-            scores = get_caregiver_scores_for_user(user_email)
-            rec_playlist = get_recommended_playlist_for_user(user_email)
-            if scores or rec_playlist:
-                st.subheader("🩺 Recommended by Caregiver")
-            if scores:
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    val = scores.get('engagement')
-                    if val is not None:
-                        st.metric("Engagement", f"{val:.1f}/10")
-                with c2:
-                    val = scores.get('focus')
-                    if val is not None:
-                        st.metric("Focus", f"{val:.1f}/10")
-                with c3:
-                    val = scores.get('relaxation')
-                    if val is not None:
-                        st.metric("Relaxation", f"{val:.1f}/10")
-                st.markdown("---")
-            if rec_playlist:
-                for track in rec_playlist:
-                    track_card(track, track['category'])
-                st.markdown("---")
-            st.subheader("🌟 Featured Tracks")
-            # Show a few tracks from each category
-            for cat in list(catalog.keys())[:2]:
-                st.markdown(f"#### {cat}")
-                for track in catalog.get(cat, [])[:2]:
-                    track_card(track, cat)
-        
-        with col2:
-            st.subheader("🎯 Tips")
-            st.info("Explore categories in the Music Library and pick what you enjoy.")
-    
+        _render_dashboard()
     elif page == "Music Library":
-        st.subheader("🎼 Music Library")
-        
-        # Category filter
-        catalog = get_catalog()
-        available_categories = sorted(list(catalog.keys()))
-        selected_categories = st.multiselect(
-            "Filter by Category",
-            available_categories,
-            default=available_categories
-        )
-        
-        # Search
-        search_term = st.text_input("🔍 Search tracks", placeholder="Enter track name...")
-        
-        # Display tracks by category
-        if not catalog:
-            st.info("No songs available. Please add songs to Firestore.")
-        for category in selected_categories:
-            if category in catalog:
-                st.markdown(f"### {category} 🎵")
-                
-                tracks = catalog.get(category, [])
-                
-                # Filter by search term
-                if search_term:
-                    tracks = [t for t in tracks if search_term.lower() in t['name'].lower()]
-                
-                if tracks:
-                    for track in tracks:
-                        track_card(track, category)
-                else:
-                    st.info(f"No tracks found matching '{search_term}' in {category} category.")
-                
-                st.markdown("---")
-    
-    # 'My Playlists' page removed per request; keep route disabled for safety
-    # elif page == "My Playlists":
-    #     pass
-    
-    # Neural Analytics page removed
-    
+        _render_music_library()
     elif page == "Trend Analysis":
-        st.subheader("📈 Trend Analysis")
-        
-        # Show music categories listened so far
-        history = st.session_state.get('listening_history', [])
-        if history:
-            st.markdown("---")
-            st.markdown("### 🎧 Category Listening Summary")
-            hist_df = pd.DataFrame(history)
-            # Ensure timestamp column is datetime
-            if 'timestamp' in hist_df.columns:
-                hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'], errors='coerce')
-
-            # Top performing track for this login session
-            try:
-                sessions = st.session_state.get('login_sessions', [])
-                session_start = sessions[-1] if sessions else None
-                df_session = hist_df
-                if session_start is not None and 'timestamp' in hist_df.columns:
-                    df_session = hist_df[hist_df['timestamp'] >= pd.to_datetime(session_start, errors='coerce')]
-                if 'track' in df_session.columns and not df_session.empty:
-                    # Extract track name safely
-                    df_session = df_session.copy()
-                    df_session['track_name'] = df_session['track'].apply(
-                        lambda x: (x.get('name') if isinstance(x, dict) else None)
-                    )
-                    name_counts = df_session['track_name'].dropna().value_counts()
-                    if not name_counts.empty:
-                        top_name = name_counts.idxmax()
-                        top_count = int(name_counts.max())
-                        st.markdown("### 🌟 Top Track This Session")
-                        st.info(f"{top_name} — Plays: {top_count}")
-            except Exception:
-                pass
-            
-            # Category distribution (counts)
-            if 'category' in hist_df.columns and not hist_df['category'].isna().all():
-                cat_counts = hist_df['category'].value_counts().sort_values(ascending=False)
-                fig_cat = px.bar(
-                    x=cat_counts.index,
-                    y=cat_counts.values,
-                    labels={'x': 'Category', 'y': 'Play Count'},
-                    title='Plays by Category'
-                )
-                st.plotly_chart(fig_cat, use_container_width=True)
-            else:
-                st.info("No category information found in listening history.")
-
-            # Daily timeline removed per request
-        else:
-            st.info("No listening activity yet. Play some tracks to see your category trends here.")
-    
-    # 'Export Report' removed per request; route disabled
-    elif False and page == "Export Report":
-        export_report()
+        _render_trend_analysis()
