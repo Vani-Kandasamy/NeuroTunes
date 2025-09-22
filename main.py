@@ -26,30 +26,47 @@ def is_caregiver(email: str) -> bool:
 
 def get_user_simple() -> Optional[Dict[str, Any]]:
     """Get user via Streamlit auth with proper logout handling."""
+    # Initialize session state for login status if it doesn't exist
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    
+    # Check if user is already logged in
+    if st.session_state.get('logged_in') and (not hasattr(st, 'user') or not st.user):
+        st.session_state.logged_in = False
+        st.rerun()
+    
     # Check if authentication is available
     if not hasattr(st, 'user') or not st.user:
         st.warning("Please log in to continue.")
         return None
-        
+    
     # User is logged in
+    st.session_state.logged_in = True
+    
     with st.sidebar:
-        if st.button("Log out", type="secondary"):
-            # Clear all session state
+        if st.button("Log out", type="secondary", key="logout_button"):
+            # Clear all session state except for the ones needed for logout
             for key in list(st.session_state.keys()):
-                del st.session_state[key]
+                if key != 'logged_in':
+                    del st.session_state[key]
             
             # Clear authentication state
             if hasattr(st, 'logout'):
                 st.logout()
             
-            # Force a full page reload using the current API method
+            # Mark as logged out and force a full page reload
+            st.session_state.logged_in = False
+            st.experimental_set_query_params(logout='true')
             st.rerun()
             return None
-            
+    
+    # Get user information
     name = getattr(st.user, "name", None) or getattr(st.user, "username", None) or "User"
     email = getattr(st.user, "email", None) or ""
     
+    # Display welcome message
     st.markdown(f"Hello, <span style='color: orange; font-weight: bold;'>{name}</span>!", unsafe_allow_html=True)
+    
     return {"name": name, "email": email}
 
 def main():
