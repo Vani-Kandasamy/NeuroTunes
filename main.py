@@ -42,8 +42,8 @@ def get_user_simple() -> Optional[Dict[str, Any]]:
             if hasattr(st, 'logout'):
                 st.logout()
             
-            # Force a full page reload
-            st.experimental_rerun()
+            # Force a full page reload using the current API method
+            st.rerun()
             return None
             
     name = getattr(st.user, "name", None) or getattr(st.user, "username", None) or "User"
