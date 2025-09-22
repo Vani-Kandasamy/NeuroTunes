@@ -24,29 +24,24 @@ def is_caregiver(email: str) -> bool:
     return email.lower() in [e.lower() for e in CAREGIVER_EMAILS]
 
 def get_user_simple() -> Optional[Dict[str, Any]]:
-    """Get user via Streamlit experimental auth if available; otherwise use a simple sidebar login form."""
-    exp_user = getattr(st, "experimental_user", None)
-    has_login = hasattr(st, "login") and hasattr(st, "logout")
-    # Preferred path: experimental auth available
-    if exp_user is not None and hasattr(exp_user, "is_logged_in") and has_login:
-        with st.sidebar:
-            if not exp_user.is_logged_in:
-                if st.button("Log in with Google", type="primary"):
-                    st.login()
-                return None
-            else:
-                if st.button("Log out", type="secondary"):
-                    st.logout()
-                    return None
-        name = getattr(exp_user, "name", None) or getattr(exp_user, "username", None) or "User"
-        email = getattr(exp_user, "email", None) or ""
-        st.markdown(f"Hello, <span style='color: orange; font-weight: bold;'>{name}</span>!", unsafe_allow_html=True)
-        return {"name": name, "email": email}
+    """Get user via Streamlit auth."""
+    # Check if authentication is available
+    if not hasattr(st, 'user') or not st.user:
+        st.warning("Please log in to continue.")
+        return None
+        
+    # User is logged in
+    with st.sidebar:
+        if st.button("Log out", type="secondary"):
+            st.session_state.clear()
+            st.rerun()
+            return None
+            
+    name = getattr(st.user, "name", None) or getattr(st.user, "username", None) or "User"
+    email = getattr(st.user, "email", None) or ""
     
-    # No fallback: require Streamlit experimental auth
-    return None
-
-
+    st.markdown(f"Hello, <span style='color: orange; font-weight: bold;'>{name}</span>!", unsafe_allow_html=True)
+    return {"name": name, "email": email}
 
 def main():
     """Main application logic (simple auth + role routing)."""
