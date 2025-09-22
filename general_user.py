@@ -403,19 +403,25 @@ def general_user_dashboard():
         
         # Stop button
         if st.button("⏹️ Stop", use_container_width=True):
-            if st.session_state.current_track:
+            if st.session_state.get('current_track'):
                 # Log stop event
                 email = st.session_state.get('user_info', {}).get('email', '')
-                if email and 'current_track' in st.session_state:
-                    DDB().log_event(email, 'stop', {
-                        'track_id': current.get('id'),
-                        'name': current.get('name')
-                    })
+                current = st.session_state.current_track
+                if email and current:
+                    try:
+                        DDB().log_event(email, 'stop', {
+                            'track_id': current.get('id'),
+                            'name': current.get('name')
+                        })
+                    except Exception as e:
+                        st.error(f"Error logging stop event: {str(e)}")
                 
                 # Reset player state
                 st.session_state.current_track = None
                 st.session_state.is_playing = False
                 st.session_state.playback_position = 0
+                
+                # Force UI update
                 st.rerun()
     
     # Main content area
