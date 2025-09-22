@@ -1,14 +1,15 @@
 import streamlit as st
 from typing import Dict, Any, Optional
-from general_user import general_user_dashboard as music_therapy_dashboard
-from caregiver import caregiver_dashboard as ml_caregiver_dashboard
+# Import the dashboard functions using a lazy import pattern
+# to avoid circular imports
+import importlib
 import os
 from db import DDB
 
 # Configure Streamlit page
 st.set_page_config(
     page_title="NeuroTunes",
-    page_icon="🎵",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -24,7 +25,7 @@ def is_caregiver(email: str) -> bool:
     return email.lower() in [e.lower() for e in CAREGIVER_EMAILS]
 
 def get_user_simple() -> Optional[Dict[str, Any]]:
-    """Get user via Streamlit auth."""
+    """Get user via Streamlit auth with proper logout handling."""
     # Check if authentication is available
     if not hasattr(st, 'user') or not st.user:
         st.warning("Please log in to continue.")
@@ -33,8 +34,16 @@ def get_user_simple() -> Optional[Dict[str, Any]]:
     # User is logged in
     with st.sidebar:
         if st.button("Log out", type="secondary"):
-            st.session_state.clear()
-            st.rerun()
+            # Clear all session state
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            
+            # Clear authentication state
+            if hasattr(st, 'logout'):
+                st.logout()
+            
+            # Force a full page reload
+            st.experimental_rerun()
             return None
             
     name = getattr(st.user, "name", None) or getattr(st.user, "username", None) or "User"
@@ -45,7 +54,6 @@ def get_user_simple() -> Optional[Dict[str, Any]]:
 
 def main():
     """Main application logic (simple auth + role routing)."""
-    # Title and image
     st.title("NeuroTunes")
     st.image(IMAGE_ADDRESS, caption="EEG Frequency Bands (Delta, Theta, Alpha, Beta, Gamma)")
     st.markdown("---")
@@ -54,6 +62,7 @@ def main():
     user = get_user_simple()
     if not user:
         st.stop()
+    
     st.session_state.user_info = user
 
     # Upsert user and log login to Firestore
@@ -64,26 +73,29 @@ def main():
         ok_user = ddb.upsert_user(email, name)
         ok_log = ddb.log_event(email, 'login', {})
 
-    # One-time automatic seeding: if songs dataset is empty, seed defaults
+    # One-time automatic seeding
     if not st.session_state.get("_seed_done"):
         try:
             ddb_seed = DDB()
             has_any = len(ddb_seed.list_songs(limit=1)) > 0
             if not has_any:
                 _ = ddb_seed.seed_initial_songs()
-        except Exception:
-            pass
+        except Exception as e:
+            st.error(f"Error seeding database: {str(e)}")
         finally:
             st.session_state["_seed_done"] = True
 
-    # Route by role based on email
+    # Lazy load the appropriate dashboard
     user_email = (user.get("email") or "").strip()
     if user_email and is_caregiver(user_email):
-        # Caregiver dashboard
-        ml_caregiver_dashboard()
+        # Import caregiver dashboard only when needed
+        from caregiver import caregiver_dashboard as dashboard
     else:
-        # General user dashboard
-        music_therapy_dashboard()
+        # Import general user dashboard only when needed
+        from general_user import general_user_dashboard as dashboard
+    
+    # Run the selected dashboard
+    dashboard()
 
 if __name__ == "__main__":
     main()
